@@ -1,0 +1,85 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: openmanus
+  labels:
+    app: openmanus
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: openmanus
+  template:
+    metadata:
+      labels:
+        app: openmanus
+    spec:
+      containers:
+      - name: openmanus
+        image: ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/openmanus:latest
+        ports:
+        - containerPort: 8000
+        env:
+        - name: MYSQL_HOST
+          valueFrom:
+            secretKeyRef:
+              name: db-credentials
+              key: mysql-host
+        - name: MYSQL_PORT
+          value: "3306"
+        - name: MYSQL_USER
+          valueFrom:
+            secretKeyRef:
+              name: db-credentials
+              key: mysql-user
+        - name: MYSQL_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: db-credentials
+              key: mysql-password
+        - name: MYSQL_DATABASE
+          valueFrom:
+            secretKeyRef:
+              name: db-credentials
+              key: mysql-database
+        - name: POSTGRES_HOST
+          valueFrom:
+            secretKeyRef:
+              name: db-credentials
+              key: postgres-host
+        - name: POSTGRES_PORT
+          value: "5432"
+        - name: POSTGRES_USER
+          valueFrom:
+            secretKeyRef:
+              name: db-credentials
+              key: postgres-user
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: db-credentials
+              key: postgres-password
+        - name: POSTGRES_DATABASE
+          valueFrom:
+            secretKeyRef:
+              name: db-credentials
+              key: postgres-database
+        resources:
+          limits:
+            cpu: "1"
+            memory: "2Gi"
+          requests:
+            cpu: "500m"
+            memory: "1Gi"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 5
+          periodSeconds: 5

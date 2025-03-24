@@ -1,7 +1,6 @@
 import logging
 import sys
 
-
 logging.basicConfig(level=logging.INFO, handlers=[logging.StreamHandler(sys.stderr)])
 
 import argparse
@@ -15,24 +14,38 @@ from mcp.server.fastmcp import FastMCP
 
 from app.logger import logger
 from app.tool.base import BaseTool
+from app.resource.base import BaseResource
 from app.tool.bash import Bash
 from app.tool.browser_use_tool import BrowserUseTool
+from app.tool.excel_tool import ExcelTool
+from app.tool.mysql_rw import MySQLRWTool
 from app.tool.str_replace_editor import StrReplaceEditor
 from app.tool.terminate import Terminate
+from app.tool.db_utils import patch_aiomysql_connection, patch_asyncpg_connection
+from app.resource.postgres_data import PostgreSQLResource
 
+# Patch database connections to handle event loop closed errors
+patch_aiomysql_connection()
+patch_asyncpg_connection()
 
 class MCPServer:
-    """MCP Server implementation with tool registration and management."""
+    """MCP Server implementation with tool and resource registration and management."""
 
     def __init__(self, name: str = "openmanus"):
         self.server = FastMCP(name)
         self.tools: Dict[str, BaseTool] = {}
+        self.resources: Dict[str, BaseResource] = {}
 
         # Initialize standard tools
         self.tools["bash"] = Bash()
         self.tools["browser"] = BrowserUseTool()
         self.tools["editor"] = StrReplaceEditor()
+        self.tools["mysql_rw"] = MySQLRWTool()
         self.tools["terminate"] = Terminate()
+        self.tools["excel"] = ExcelTool()
+        
+        # Initialize resources
+        self.resources["postgres_data"] = PostgreSQLResource()
 
     def register_tool(self, tool: BaseTool, method_name: Optional[str] = None) -> None:
         """Register a tool with parameter validation and documentation."""
@@ -74,6 +87,47 @@ class MCPServer:
         # Register with server
         self.server.tool()(tool_method)
         logger.info(f"Registered tool: {tool_name}")
+        
+    def register_resource(self, resource: BaseResource, method_name: Optional[str] = None) -> None:
+        """Register a resource with parameter validation and documentation."""
+        resource_name = method_name or resource.name
+        resource_param = resource.to_param()
+        resource_function = resource_param["function"]
+
+        # Define the async function to be registered
+        async def resource_method(**kwargs):
+            logger.info(f"Accessing {resource_name}: {kwargs}")
+            result = await resource.access(**kwargs)
+
+            logger.info(f"Result of {resource_name}: {result}")
+
+            # Handle different types of results
+            if hasattr(result, "model_dump"):
+                return json.dumps(result.model_dump())
+            elif isinstance(result, dict):
+                return json.dumps(result)
+            return result
+
+        # Set method metadata
+        resource_method.__name__ = resource_name
+        resource_method.__doc__ = self._build_docstring(resource_function)
+        resource_method.__signature__ = self._build_signature(resource_function)
+
+        # Store parameter schema
+        param_props = resource_function.get("parameters", {}).get("properties", {})
+        required_params = resource_function.get("parameters", {}).get("required", [])
+        resource_method._parameter_schema = {
+            param_name: {
+                "description": param_details.get("description", ""),
+                "type": param_details.get("type", "any"),
+                "required": param_name in required_params,
+            }
+            for param_name, param_details in param_props.items()
+        }
+
+        # Register with server
+        self.server.tool()(resource_method)  # Resources are registered as tools with the MCP server
+        logger.info(f"Registered resource: {resource_name}")
 
     def _build_docstring(self, tool_function: dict) -> str:
         """Build a formatted docstring from tool function metadata."""
@@ -142,22 +196,85 @@ class MCPServer:
         if "browser" in self.tools and hasattr(self.tools["browser"], "cleanup"):
             await self.tools["browser"].cleanup()
 
-    def register_all_tools(self) -> None:
+    async def register_all_tools(self) -> None:
         """Register all tools with the server."""
-        for tool in self.tools.values():
-            self.register_tool(tool)
+        # Initialize tools
+        browser_use_tool = BrowserUseTool()
+        mysql_rw_tool = MySQLRWTool()
+        excel_tool = ExcelTool()
+
+        # Register tools with the agent
+        self.register_tool(browser_use_tool)
+        self.register_tool(mysql_rw_tool)
+        self.register_tool(excel_tool)
+
+        # Initialize MySQL read/write tool with remote connection parameters
+        await mysql_rw_tool.initialize(
+            host="68.178.150.182",  # GoDaddy MySQL server
+            port=3306,  # MySQL default port
+            user="kc099",  # MySQL username
+            password="Roboworks23!",  # MySQL password
+            database="testdata",  # MySQL database name
+            max_rows=100
+        )
+        
+        # Initialize and register resources
+        await self.register_all_resources()
+
+    async def register_all_resources(self) -> None:
+        """Register all resources with the server."""
+        # Initialize resources
+        postgres_resource = PostgreSQLResource()
+        
+        # Register resources with the agent
+        self.register_resource(postgres_resource)
+        
+        # Initialize PostgreSQL resource
+        await postgres_resource.initialize(
+            host="127.0.0.1",
+            port=5432,  # Default PostgreSQL port, adjust if needed
+            user="postgres",  # Default PostgreSQL user, adjust if needed
+            password="12345",  # Password for PostgreSQL
+            database="postgres",  # Default database name, adjust if needed
+            max_rows=100
+        )
+
+    async def cleanup_resources(self) -> None:
+        """Clean up resources when the server is shutting down."""
+        logger.info("Cleaning up server resources...")
+        
+        # Close database connections first
+        try:
+            # Clean up MySQL connection if it exists
+            if "mysql_rw" in self.tools and hasattr(self.tools["mysql_rw"], "cleanup"):
+                logger.info("Closing MySQL connection...")
+                await self.tools["mysql_rw"].cleanup()
+                
+            # Clean up PostgreSQL connection if it exists
+            if "postgres_data" in self.resources and hasattr(self.resources["postgres_data"], "cleanup"):
+                logger.info("Closing PostgreSQL connection...")
+                await self.resources["postgres_data"].cleanup()
+        except Exception as e:
+            logger.error(f"Error during database cleanup: {str(e)}")
+        
+        logger.info("Server resources cleaned up")
 
     def run(self, transport: str = "stdio") -> None:
         """Run the MCP server."""
-        # Register all tools
-        self.register_all_tools()
-
-        # Register cleanup function (match original behavior)
-        atexit.register(lambda: asyncio.run(self.cleanup()))
-
-        # Start server (with same logging as original)
-        logger.info(f"Starting OpenManus server ({transport} mode)")
-        self.server.run(transport=transport)
+        try:
+            # Run the register_all_tools method in an asyncio event loop
+            asyncio.run(self.register_all_tools())
+            
+            if transport == "stdio":
+                logger.info("Starting OpenManus server (stdio mode)")
+                self.server.run(transport=transport)
+            else:
+                raise ValueError(f"Unsupported transport: {transport}")
+        except Exception as e:
+            logger.error(f"Error running MCP server: {str(e)}")
+        finally:
+            # Ensure proper cleanup of resources
+            asyncio.run(self.cleanup_resources())
 
 
 def parse_args() -> argparse.Namespace:

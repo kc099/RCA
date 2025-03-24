@@ -1,0 +1,156 @@
+
+Name: open_sheet(name)
+Description: Open a sheet by name
+Parameters:
+- name (Type: string): The name of the sheet to open.
+Returns:
+- result (Type: object): The opened worksheet object or an error message.
+Name: del_sheet(name)
+Description: Deletes the specified sheet.
+Parameters:
+- name (Type: string): The name of the sheet to be deleted.
+Returns:
+- result (Type: object): Whether the operation was successful.
+Name: freeze_data(dimension, num)
+Description: Freeze rows and/or columns on the worksheet
+Parameters:
+- dimension (Type: string): The dimension to freeze, either ‘rows’ or ‘columns’
+- num (Type: integer): Number of rows/cols to freeze.
+Returns:
+- result (Type: object): Whether the operation was successful.
+Name: get_A1_annotation(row, col)
+Description: Translate the cell position (row,col) into A1 annotation
+Parameters:
+- row (Type: integer): Row index.
+- col (Type: integer): Column index.
+Returns:
+- result (Type: string): The A1 notation of the cell or an error message.
+Name: insert_cols(values_list, col_idx)
+Description: Insert columns into sheet at specified column index
+Parameters:
+- values_list (Type: array[array[string]]): A list of lists, each list containing one column’s values,
+which can be expressions
+- col_idx (Type: integer): Start column to update. Defaults to 1.
+Returns:
+- result (Type: object): The updated worksheet data or an error message.
+Name: insert_rows(values_list, row_idx)
+Description: Insert rows into sheet at specified row index
+Parameters:
+- values_list (Type: array[array[string]]): A list of lists, each list containing one row’s values,
+which can be expressions
+- row_idx (Type: integer): Start row to update. Defaults to 1.
+Returns:
+- result (Type: object): The updated worksheet data or an error message.
+
+
+Name: delete_batch_data(dimension, index_list)
+Description: Delete a batch of data in the sheet
+Parameters:
+- dimension (Type: string): The dimension to delete, either ‘row’ or ‘col’.
+- index_list (Type: array[integer]): List of the indexes of rows/cols for deletion.
+Returns:
+- result (Type: object): The updated worksheet data or an error message.
+Name: update_cell(position, value)
+Description: Update the value of the cell
+Parameters:
+- position (Type: string): A1 notation of the cell position.
+- value: The value to set.
+Returns:
+- result (Type: object): The updated worksheet data or an error message.
+Name: update_cell_by_formula(start_position, end_position, position_list, result_position, oper-
+ator)
+Description: Update the value of the target cell by applying formulas on some specified cells.
+Note: Either specify position_list or start_position and end_position.
+Parameters:
+- start_position (Type: string): The starting position of the range. Default: ‘B1’.
+- end_position (Type: string): The ending position of the range. Default: ‘D2’.
+- position_list (Type: array[string]): A list of cell positions in A1 notation.
+- result_position (Type: string): The position of the cell where the result of the formula will be
+stored in. Default: ‘G2’.
+- operator (Type: string): The operator to be applied on selected cells. Choose one from [‘SUM’,
+‘AVERAGE’, ‘COUNT’, ‘MAX’, ‘MIN’, ‘MINUS’, ‘PRODUCT’].
+Returns:
+- result (Type: object): The updated worksheet data or an error message.
+Name: update_range(start_position, end_position, values_list)
+Description: Update a range of the cells from a list
+Parameters:
+- start_position (Type: string): A1 notation of the start cell.
+- end_position (Type: string): A1 notation of the end cell.
+- values_list (Type: array[array[Any]]): List of values to be inserted, which can be expressions
+Returns:
+- result (Type: object): The updated worksheet data or an error message.
+Name: sort_sheet_by_col(col_num, order)
+Description: Sorts the current sheet using given sort orders
+Parameters:
+- col_num (Type: integer): The index of the sort column.
+- order (Type: string): The sort order. Possible values are ‘asc’ or ‘des’.
+Returns:
+- result (Type: object): The updated worksheet data or an error message.
+Name: merge_cells(start_position, end_position)
+Description: Merge cells in sheet
+Parameters:
+- start_position (Type: string): Starting cell position(top left) in A1 annotation.
+- end_position (Type: string): Ending cell position(bottom right) in A1 annotation.
+Returns:
+- result (Type: object): The updated worksheet data or an error message.
+
+
+Name: update_note(position, content)
+Description: Update a note in a certain cell
+Parameters:
+- position (Type: string): cell position in A1 annotation.
+- content (Type: string): The text note to insert.
+Returns:
+- result (Type: string): The updated note or an error message.
+Name: get_all_values()
+Description: Display all cell values in current sheet
+Returns:
+- result (Type: array[array[Any]]): Return all cell values or an error message.
+Name: get_range_values(start_position, end_position)
+Description: Returns a list of cell data from a specified range.
+Parameters:
+- start_position (Type: string): Starting cell position in A1 annotation.
+- end_position (Type: string): Ending cell position in A1 annotation.
+Returns:
+- result (Type: array[array[Any]]): List of cell data from the specified range or an error message.
+Name: get_cell_value(position)
+Description: Get the value of a specific cell
+Parameters:
+- position (Type: string): Cell position in A1 annotation.
+Returns:
+- result : Cell value or an error message.
+Name: get_value_by_formula(start_position, end_position, position_list, operator)
+Description: Calculate a value applying formulas on specified cells. Note: Either specify
+position_list or start_position and end_position.
+Parameters:
+- start_position (Type: string): The starting position of the range. Default: ‘B1’.
+- end_position (Type: string): The ending position of the range. Default: ‘D2’.
+- position_list (Type: array[string]): A list of cell positions in A1 notation.
+- operator (Type: string): The operator to be applied on selected cells. Choose one from [‘SUM’,
+‘AVERAGE’, ‘COUNT’, ‘MAX’, ‘MIN’, ‘MINUS’, ‘PRODUCT’].
+Returns:
+- result (Type: string): Calculated result or an error message.
+Name: filter_cells(query, in_row, in_column)
+Description: Find all cells matching the query, return all cells’ position.
+Parameters:
+- query (Type: [‘string’, ‘re.RegexObject’]): A string to match or compiled regular expression.
+- in_row (Type: [‘integer’, ‘None’]): Row number to scope the search. Default is all rows
+- in_column (Type: [‘integer’, ‘None’]): Column number to scope the search. Default is all
+columns
+Returns:
+- result (Type: array[string]): List of cell addresses that match the query or an error message.
+Name: get_note(position)
+Description: Get the note at the certain cell, or return empty string if the cell does not have a note.
+Parameters:
+- position (Type: string): Cell position in A1 annotation.
+Returns:
+- result (Type: string): Note content or an error message.
+
+
+Name: finish()
+Description: Return an answer and finish the task
+Returns:
+- result (Type: array[array[Any]]): Return all cell values or an error message.
+
+
+
