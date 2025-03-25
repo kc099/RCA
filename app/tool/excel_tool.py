@@ -41,7 +41,11 @@ class ExcelTool(BaseTool):
                         "update_cell_by_formula", "update_range", "sort_sheet_by_col",
                         "merge_cells", "update_note", "get_all_values", "get_range_values",
                         "get_cell_value", "get_value_by_formula", "filter_cells", "get_note",
-                        "finish", "create_workbook", "save_workbook", "open_workbook"
+                        "finish", "create_workbook", "save_workbook", "open_workbook",
+                        # Add common action aliases
+                        "read", "read_sheet", "open", "save", "create", "write", "update",
+                        "get", "get_range", "insert_row", "insert_column", "delete", "sort",
+                        "filter", "merge"
                     ]
                 },
                 "params": {
@@ -60,10 +64,55 @@ class ExcelTool(BaseTool):
             params: Parameters specific to the action.
             
         Returns:
-            Result of the operation.
+            The result of the Excel operation.
         """
+        # Map common action names to actual Excel tool actions
+        action_map = {
+            "read": "get_all_values",
+            "read_sheet": "get_all_values",
+            "open": "open_workbook",
+            "save": "save_workbook",
+            "create": "create_workbook",
+            "write": "update_cell",
+            "update": "update_cell",
+            "get": "get_cell_value",
+            "get_range": "get_range_values",
+            "insert_row": "insert_rows",
+            "insert_column": "insert_cols",
+            "delete": "delete_batch_data",
+            "sort": "sort_sheet_by_col",
+            "filter": "filter_cells",
+            "merge": "merge_cells"
+        }
+        
+        # Map the action if it's a common name
+        mapped_action = action_map.get(action, action)
+        
+        # Log the action mapping if it occurred
+        if mapped_action != action:
+            logger.info(f"Mapped Excel action '{action}' to '{mapped_action}'")
+            action = mapped_action
+        
+        # Special case handling for read/get_all_values when no workbook is open yet
+        if action == "get_all_values" and (self._workbook is None) and "file_path" in params:
+            logger.info(f"Auto-opening workbook for get_all_values: {params['file_path']}")
+            # First open the workbook
+            open_result = await self._open_workbook(file_path=params["file_path"])
+            if "error" in open_result and open_result["error"]:
+                return open_result
+            
+            # If sheet name is provided, open that sheet
+            if "sheet_name" in params:
+                sheet_result = await self._open_sheet(name=params["sheet_name"])
+                if "error" in sheet_result and sheet_result["error"]:
+                    return sheet_result
+            
+            # Now get all values without the file_path param
+            params_copy = params.copy()
+            params_copy.pop("file_path", None)
+            return await self._get_all_values(**params_copy)
+        
         try:
-            # Map action to method
             if action == "open_workbook":
                 return await self._open_workbook(**params)
             elif action == "create_workbook":
@@ -112,10 +161,9 @@ class ExcelTool(BaseTool):
                 return await self._finish(**params)
             else:
                 return ToolResult(error=f"Unknown action: {action}").dict()
-                
         except Exception as e:
             logger.exception(f"Error executing Excel action {action}: {e}")
-            return ToolResult(error=f"Error: {str(e)}").dict()
+            return ToolResult(error=f"Error executing {action}: {str(e)}").dict()
 
     # Helper methods for cell reference conversions
     def _position_to_coordinates(self, position: str) -> Tuple[int, int]:
@@ -161,27 +209,47 @@ class ExcelTool(BaseTool):
         except Exception as e:
             return ToolResult(error=f"Failed to create workbook: {str(e)}").dict()
     
-    async def _open_workbook(self, filename: str) -> Dict[str, Any]:
+    async def _open_workbook(self, filename: str = None, file_path: str = None) -> Dict[str, Any]:
         """Open an existing Excel workbook.
         
         Args:
             filename: The name of the file to open.
+            file_path: Alternative parameter name for the file path to open.
             
         Returns:
             Result of the operation.
         """
         try:
-            if not os.path.exists(filename):
-                return ToolResult(error=f"File does not exist: {filename}").dict()
+            # Use file_path if provided, otherwise use filename
+            filepath = file_path if file_path is not None else filename
             
-            self._workbook = load_workbook(filename)
+            if not filepath:
+                return ToolResult(error="No filename or file_path provided").dict()
+                
+            # Log the file path being opened
+            logger.info(f"Opening Excel workbook: {filepath}")
+            
+            # Check if file exists
+            if not os.path.exists(filepath):
+                return ToolResult(error=f"File not found: {filepath}").dict()
+                
+            self._workbook = load_workbook(filepath)
             self._current_sheet = self._workbook.active
-            self._current_file_path = filename
+            self._current_file_path = filepath
             
             sheet_names = self._workbook.sheetnames
-            return ToolResult(output=f"Opened workbook: {filename}\nAvailable sheets: {', '.join(sheet_names)}").dict()
+            active_sheet = self._current_sheet.title
+            
+            return ToolResult(
+                output={
+                    "message": f"Opened workbook {filepath}",
+                    "sheet_names": sheet_names,
+                    "active_sheet": active_sheet
+                }
+            ).dict()
         except Exception as e:
-            return ToolResult(error=f"Failed to open workbook: {str(e)}").dict()
+            logger.exception(f"Error opening workbook: {e}")
+            return ToolResult(error=f"Error opening workbook: {str(e)}").dict()
     
     async def _save_workbook(self, filename: Optional[str] = None) -> Dict[str, Any]:
         """Save the current workbook.

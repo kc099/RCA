@@ -20,6 +20,7 @@ from app.tool.browser_use_tool import BrowserUseTool
 from app.tool.excel_tool import ExcelTool
 from app.tool.mysql_rw import MySQLRWTool
 from app.tool.str_replace_editor import StrReplaceEditor
+from app.tool.python_execute import PythonExecute
 from app.tool.terminate import Terminate
 from app.tool.db_utils import patch_aiomysql_connection, patch_asyncpg_connection
 from app.resource.postgres_data import PostgreSQLResource
@@ -42,8 +43,7 @@ class MCPServer:
         self.tools["editor"] = StrReplaceEditor()
         self.tools["mysql_rw"] = MySQLRWTool()
         self.tools["terminate"] = Terminate()
-        self.tools["excel"] = ExcelTool()
-        
+
         # Initialize resources
         self.resources["postgres_data"] = PostgreSQLResource()
 
@@ -87,21 +87,36 @@ class MCPServer:
         # Register with server
         self.server.tool()(tool_method)
         logger.info(f"Registered tool: {tool_name}")
-        
+
     def register_resource(self, resource: BaseResource, method_name: Optional[str] = None) -> None:
         """Register a resource with parameter validation and documentation."""
         resource_name = method_name or resource.name
-        resource_param = resource.to_param()
-        resource_function = resource_param["function"]
+        self.resources[resource_name] = resource
 
-        # Define the async function to be registered
+        # Prepare function info for documentation
+        resource_function = {
+            "name": resource_name,
+            "description": resource.description,
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": []
+            }
+        }
+
+        # Create a wrapper function that validates and passes parameters to the resource
         async def resource_method(**kwargs):
-            logger.info(f"Accessing {resource_name}: {kwargs}")
-            result = await resource.access(**kwargs)
+            """Resource method wrapper."""
+            try:
+                result = await resource.access(**kwargs)
+                return result
+            except Exception as e:
+                logger.exception(f"Error executing resource {resource_name}: {e}")
+                return {"error": str(e)}
 
-            logger.info(f"Result of {resource_name}: {result}")
-
-            # Handle different types of results
+        # Handle various return types
+        def serialize_result(result):
+            """Serialize the result to JSON if possible."""
             if hasattr(result, "model_dump"):
                 return json.dumps(result.model_dump())
             elif isinstance(result, dict):
@@ -125,9 +140,11 @@ class MCPServer:
             for param_name, param_details in param_props.items()
         }
 
-        # Register with server
-        self.server.tool()(resource_method)  # Resources are registered as tools with the MCP server
-        logger.info(f"Registered resource: {resource_name}")
+        # Register with server using proper resource format with URI
+        # FastMCP expects a valid URL, using http://resources/ prefix
+        resource_uri = f"http://resources/{resource_name}"
+        self.server.resource(resource_uri)(resource_method)
+        logger.info(f"Registered resource: {resource_name} with URI: {resource_uri}")
 
     def _build_docstring(self, tool_function: dict) -> str:
         """Build a formatted docstring from tool function metadata."""
@@ -201,11 +218,19 @@ class MCPServer:
         # Initialize tools
         browser_use_tool = BrowserUseTool()
         mysql_rw_tool = MySQLRWTool()
+        python_tool = PythonExecute()
+        terminate_tool = Terminate()
+        string_tool = StrReplaceEditor()
+
+        # Initialize Excel tool
         excel_tool = ExcelTool()
 
         # Register tools with the agent
         self.register_tool(browser_use_tool)
         self.register_tool(mysql_rw_tool)
+        self.register_tool(python_tool)
+        self.register_tool(terminate_tool)
+        self.register_tool(string_tool)
         self.register_tool(excel_tool)
 
         # Initialize MySQL read/write tool with remote connection parameters
@@ -217,7 +242,7 @@ class MCPServer:
             database="testdata",  # MySQL database name
             max_rows=100
         )
-        
+
         # Initialize and register resources
         await self.register_all_resources()
 
@@ -225,10 +250,10 @@ class MCPServer:
         """Register all resources with the server."""
         # Initialize resources
         postgres_resource = PostgreSQLResource()
-        
+
         # Register resources with the agent
         self.register_resource(postgres_resource)
-        
+
         # Initialize PostgreSQL resource
         await postgres_resource.initialize(
             host="127.0.0.1",
@@ -242,21 +267,21 @@ class MCPServer:
     async def cleanup_resources(self) -> None:
         """Clean up resources when the server is shutting down."""
         logger.info("Cleaning up server resources...")
-        
+
         # Close database connections first
         try:
             # Clean up MySQL connection if it exists
             if "mysql_rw" in self.tools and hasattr(self.tools["mysql_rw"], "cleanup"):
                 logger.info("Closing MySQL connection...")
                 await self.tools["mysql_rw"].cleanup()
-                
+
             # Clean up PostgreSQL connection if it exists
             if "postgres_data" in self.resources and hasattr(self.resources["postgres_data"], "cleanup"):
                 logger.info("Closing PostgreSQL connection...")
                 await self.resources["postgres_data"].cleanup()
         except Exception as e:
             logger.error(f"Error during database cleanup: {str(e)}")
-        
+
         logger.info("Server resources cleaned up")
 
     def run(self, transport: str = "stdio") -> None:
@@ -264,7 +289,7 @@ class MCPServer:
         try:
             # Run the register_all_tools method in an asyncio event loop
             asyncio.run(self.register_all_tools())
-            
+
             if transport == "stdio":
                 logger.info("Starting OpenManus server (stdio mode)")
                 self.server.run(transport=transport)

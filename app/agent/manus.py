@@ -1,22 +1,23 @@
 from pydantic import Field
 
-from app.agent.browser import BrowserAgent
+from app.agent.excel_agent import ExcelAgent
 from app.config import config
 from app.prompt.browser import NEXT_STEP_PROMPT as BROWSER_NEXT_STEP_PROMPT
 from app.prompt.manus import NEXT_STEP_PROMPT, SYSTEM_PROMPT
 from app.tool import Terminate, ToolCollection
 from app.tool.browser_use_tool import BrowserUseTool
+from app.tool.excel_tool import ExcelTool
 from app.tool.python_execute import PythonExecute
 from app.tool.str_replace_editor import StrReplaceEditor
 
 
-class Manus(BrowserAgent):
+class Manus(ExcelAgent):
     """
     A versatile general-purpose agent that uses planning to solve various tasks.
 
-    This agent extends BrowserAgent with a comprehensive set of tools and capabilities,
-    including Python execution, web browsing, file operations, and information retrieval
-    to handle a wide range of user requests.
+    This agent extends ExcelAgent with a comprehensive set of tools and capabilities,
+    including Python execution, web browsing, Excel manipulation, file operations, 
+    and information retrieval to handle a wide range of user requests.
     """
 
     name: str = "Manus"
@@ -33,7 +34,7 @@ class Manus(BrowserAgent):
     # Add general-purpose tools to the tool collection
     available_tools: ToolCollection = Field(
         default_factory=lambda: ToolCollection(
-            PythonExecute(), BrowserUseTool(), StrReplaceEditor(), Terminate()
+            PythonExecute(), BrowserUseTool(), ExcelTool(), StrReplaceEditor(), Terminate()
         )
     )
 
@@ -50,14 +51,14 @@ class Manus(BrowserAgent):
             if hasattr(msg, "content") and isinstance(msg.content, str)
         )
 
+        # If browser is being used, switch to browser-specific prompt
         if browser_in_use:
-            # Override with browser-specific prompt temporarily to get browser context
             self.next_step_prompt = BROWSER_NEXT_STEP_PROMPT
 
-        # Call parent's think method
+        # Execute think with appropriate context
         result = await super().think()
 
-        # Restore original prompt
+        # Restore original prompt for next interaction
         self.next_step_prompt = original_prompt
 
         return result

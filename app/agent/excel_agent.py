@@ -3,53 +3,85 @@
 import logging
 from typing import Any, Dict, List, Optional, Union, Tuple
 
-from app.agent.toolcall import ToolCallAgent
+from pydantic import Field
+
+from app.agent.browser import BrowserAgent
+from app.logger import logger
+from app.prompt.excel import NEXT_STEP_PROMPT, SYSTEM_PROMPT
+from app.schema import Message, ToolChoice
 from app.tool.excel_tool import ExcelTool
+from app.tool.terminate import Terminate
 from app.tool.tool_collection import ToolCollection
 
-logger = logging.getLogger(__name__)
 
-EXCEL_AGENT_SYSTEM_PROMPT = """You are an Excel assistant capable of manipulating Excel spreadsheets.
-You can perform operations such as:
-- Creating, opening, and saving workbooks
-- Managing sheets within workbooks
-- Updating cells and ranges
-- Applying formulas and sorting data
-- Retrieving data from cells and ranges
-- Searching for specific content within sheets
-
-When working with Excel data, always:
-1. Ensure workbooks are opened before attempting operations
-2. Properly handle errors and edge cases
-3. Provide clear explanations of actions taken
-4. Use cell references in A1 notation (e.g., A1, B2, AA10)
-"""
-
-class ExcelAgent(ToolCallAgent):
-    """Agent specialized for Excel manipulation tasks."""
+class ExcelAgent(BrowserAgent):
+    """Agent specialized for Excel manipulation tasks.
+    
+    This agent extends BrowserAgent with Excel-specific capabilities
+    to manipulate Excel workbooks, sheets, and cells.
+    """
     
     name: str = "excel_agent"
     description: str = "An agent that can manipulate Excel spreadsheets"
-    system_prompt: str = EXCEL_AGENT_SYSTEM_PROMPT
     
-    def __init__(self, **kwargs):
-        """Initialize the Excel agent with the Excel tool."""
-        # Create the Excel tool
-        excel_tool = ExcelTool()
-        
-        # Create a tool collection with the Excel tool
-        available_tools = ToolCollection(excel_tool)
-        
-        # Initialize the agent with the Excel tool
-        super().__init__(
-            name="excel_agent",
-            description="An agent that can manipulate Excel spreadsheets",
-            system_prompt=EXCEL_AGENT_SYSTEM_PROMPT,
-            available_tools=available_tools,
-            **kwargs
+    system_prompt: str = SYSTEM_PROMPT
+    next_step_prompt: str = NEXT_STEP_PROMPT
+    
+    max_observe: int = 10000
+    max_steps: int = 20
+    
+    # Configure the available tools
+    available_tools: ToolCollection = Field(
+        default_factory=lambda: ToolCollection(
+            ExcelTool(), 
+            Terminate()
         )
+    )
+    
+    # Use Auto for tool choice to allow both tool usage and free-form responses
+    tool_choices: ToolChoice = ToolChoice.AUTO
+    special_tool_names: List[str] = Field(default_factory=lambda: [Terminate().name])
+    
+    async def _handle_special_tool(self, name: str, result: Any, **kwargs):
+        """Handle special tools like terminate."""
+        if not self._is_special_tool(name):
+            return
+        else:
+            # Clean up any resources if needed
+            await super()._handle_special_tool(name, result, **kwargs)
+    
+    async def get_excel_state(self) -> Optional[Dict[str, Any]]:
+        """Get the current Excel state for context in next steps."""
+        excel_tool = self.available_tools.get_tool(ExcelTool().name)
+        if not excel_tool:
+            return None
+            
+        try:
+            # You could implement state tracking here if needed
+            return {
+                "status": "active",
+                "tool_name": excel_tool.name
+            }
+        except Exception as e:
+            logger.error(f"Error getting Excel state: {e}")
+            return None
+    
+    async def think(self) -> bool:
+        """Process current state and decide next actions using tools."""
+        # Get Excel state for context
+        excel_state = await self.get_excel_state()
         
-    async def manipulate_excel(self, action: str, params: Dict[str, Any]) -> Dict[str, Any]:
+        # Add Excel state to the context if available
+        if excel_state:
+            context_msg = Message.system_message(
+                f"Current Excel state: {excel_state}"
+            )
+            self.messages.append(context_msg)
+            
+        # Use the parent class's think method to handle the rest
+        return await super().think()
+    
+    async def execute_excel_action(self, action: str, params: Dict[str, Any]) -> Dict[str, Any]:
         """Execute an Excel action using the Excel tool.
         
         Args:
@@ -60,11 +92,12 @@ class ExcelAgent(ToolCallAgent):
             The result of the Excel operation.
         """
         try:
-            # Create a tool call for the Excel tool
-            result = await self.available_tools.tools["excel_tool"].execute(
-                action=action,
-                params=params
-            )
+            excel_tool = self.available_tools.get_tool(ExcelTool().name)
+            if not excel_tool:
+                return {"error": "Excel tool not available"}
+                
+            # Execute the action
+            result = await excel_tool.execute(action=action, params=params)
             return result
         except Exception as e:
             logger.exception(f"Error executing Excel action {action}: {e}")

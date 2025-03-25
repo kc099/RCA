@@ -5,6 +5,11 @@ logs/
 # Data
 data/
 
+# Excel files
+*.xlsx
+
+*.zip
+
 # Workspace
 workspace/
 
