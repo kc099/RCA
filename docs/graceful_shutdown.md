@@ -1,6 +1,6 @@
 # Graceful Shutdown and Resource Management
 
-This document describes the patterns and techniques used in OpenManus for graceful shutdown and resource management, particularly for asynchronous database connections.
+This document describes the patterns and techniques used in RCA for graceful shutdown and resource management, particularly for asynchronous database connections.
 
 ## Table of Contents
 
@@ -11,7 +11,7 @@ This document describes the patterns and techniques used in OpenManus for gracef
   - [Error Handling in Cleanup Methods](#error-handling-in-cleanup-methods)
   - [Monkey Patching](#monkey-patching)
   - [Decorator Pattern for Safe Cleanup](#decorator-pattern-for-safe-cleanup)
-- [Implementation in OpenManus](#implementation-in-openmanus)
+- [Implementation in RCA](#implementation-in-rca)
 - [Best Practices](#best-practices)
 
 ## Overview
@@ -23,7 +23,7 @@ Proper resource management is critical for any application, especially those usi
 - Error messages during shutdown
 - Hanging connections
 
-The OpenManus framework implements several patterns to ensure graceful shutdown and proper resource management.
+The RCA framework implements several patterns to ensure graceful shutdown and proper resource management.
 
 ## Common Issues with Asyncio Resources
 
@@ -59,7 +59,7 @@ async def cleanup_resources(self):
     # Close database connections first
     if hasattr(self, "db_connection") and self.db_connection:
         await self.db_connection.close()
-    
+
     # Then close other resources
     # ...
 ```
@@ -94,7 +94,7 @@ def patch_connection_class():
     """Patch a connection class to handle event loop closed errors."""
     # Save the original __del__ method
     original_del = Connection.__del__
-    
+
     # Define a new __del__ method that handles event loop closed errors
     def safe_del(self):
         try:
@@ -106,7 +106,7 @@ def patch_connection_class():
             else:
                 # Log other errors but don't crash
                 logger.error(f"Error in Connection.__del__: {str(e)}")
-    
+
     # Replace the original __del__ method with our safe version
     Connection.__del__ = safe_del
 ```
@@ -128,7 +128,7 @@ def safe_db_cleanup(cleanup_func):
                 return None
             else:
                 raise
-    
+
     return wrapper
 ```
 
@@ -146,7 +146,7 @@ def run(self, transport: str = "stdio") -> None:
     try:
         # Run the register_all_tools method in an asyncio event loop
         asyncio.run(self.register_all_tools())
-        
+
         if transport == "stdio":
             logger.info("Starting OpenManus server (stdio mode)")
             self.stdio_transport.run()
