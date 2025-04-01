@@ -31,7 +31,10 @@ pip install -r requirements.txt
 1. Install uv (A fast Python package installer and resolver):
 
 ```bash
+#unix or macos
 curl -LsSf https://astral.sh/uv/install.sh | sh
+#windows
+pip install uv
 ```
 
 2. Clone the repository:
@@ -47,7 +50,7 @@ cd RCA
 uv venv --python 3.12
 source .venv/bin/activate  # On Unix/macOS
 # Or on Windows:
-# .venv\Scripts\activate
+.venv\Scripts\activate
 ```
 
 4. Install dependencies:
@@ -56,7 +59,7 @@ source .venv/bin/activate  # On Unix/macOS
 uv pip install -r requirements.txt
 ```
 
-### Browser Automation Tool (Optional)
+### Browser Automation Tool (For Browser Use)
 ```bash
 playwright install
 ```
@@ -82,20 +85,8 @@ api_key = "sk-..."  # Replace with your actual API key
 max_tokens = 4096
 temperature = 0.0
 
-# Optional configuration for specific LLM models
-[llm.vision]
-model = "gpt-4o"
-base_url = "https://api.openai.com/v1"
-api_key = "sk-..."  # Replace with your actual API key
-```
-
 ## Quick Start
 
-One line for run RCA:
-
-```bash
-python main.py
-```
 
 Then input your idea via terminal!
 
@@ -103,13 +94,6 @@ For MCP tool version, you can run:
 ```bash
 python run_mcp.py
 ```
-
-For unstable multi-agent version, you also can run:
-
-```bash
-python run_flow.py
-```
-
 
 
 ## Cite
