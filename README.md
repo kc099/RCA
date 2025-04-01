@@ -31,9 +31,9 @@ pip install -r requirements.txt
 1. Install uv (A fast Python package installer and resolver):
 
 ```bash
-#unix or macos
+#linux
 curl -LsSf https://astral.sh/uv/install.sh | sh
-#windows
+#windows or macos
 pip install uv
 ```
 
@@ -84,7 +84,7 @@ base_url = "https://api.openai.com/v1"
 api_key = "sk-..."  # Replace with your actual API key
 max_tokens = 4096
 temperature = 0.0
-
+```
 ## Quick Start
 
 
