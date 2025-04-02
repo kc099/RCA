@@ -231,7 +231,7 @@ class MCPServer:
         self.register_tool(python_tool)
         self.register_tool(terminate_tool)
         self.register_tool(string_tool)
-        self.register_tool(excel_tool)
+        #self.register_tool(excel_tool)
 
         # Initialize MySQL read/write tool with remote connection parameters
         await mysql_rw_tool.initialize(
