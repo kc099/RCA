@@ -5,11 +5,12 @@ This module extends the MCPAgent with data analytics filtering capabilities.
 """
 
 from typing import Optional
+import re
 
 from app.agent.mcp import MCPAgent
 from app.filter.data_analytics_filter import DataAnalyticsFilter
 from app.logger import logger
-from app.schema import Message
+from app.schema import Message, AgentState
 
 
 class DataAnalyticsMCPAgent(MCPAgent):
@@ -26,6 +27,7 @@ class DataAnalyticsMCPAgent(MCPAgent):
     # Add data analytics filtering
     filter: DataAnalyticsFilter = None
     _is_analytics_request: bool = False
+    _awaiting_user_input: bool = False
     
     async def initialize(
         self,
@@ -82,6 +84,13 @@ class DataAnalyticsMCPAgent(MCPAgent):
         if not request:
             return "No request provided."
         
+        # Reset the awaiting user input flag when a new request comes in
+        self._awaiting_user_input = False
+        
+        # Reset the state if it was waiting for input
+        if self.state == AgentState.WAITING_FOR_INPUT:
+            self.state = AgentState.IDLE
+        
         # Check if request is allowed by the filter
         is_analytics, analysis = self.filter.is_data_analytics_query(request)
         self._is_analytics_request = is_analytics
@@ -102,3 +111,71 @@ class DataAnalyticsMCPAgent(MCPAgent):
         
         # Process allowed request
         return await super().run(request)
+    
+    async def think(self) -> bool:
+        """
+        Process current state and decide next actions with analytics focus.
+        
+        Returns:
+            Boolean indicating if action should be taken
+        """
+        # If we're waiting for user input, don't proceed
+        if self._awaiting_user_input:
+            logger.info("Agent is waiting for user input before proceeding")
+            # Set the state to WAITING_FOR_INPUT to pause the execution loop
+            self.state = AgentState.WAITING_FOR_INPUT
+            return False
+            
+        # Execute the normal think process
+        result = await super().think()
+        
+        # After thinking, check if the last assistant message contains a question
+        # that would require user input before proceeding
+        if result and self.memory.messages:
+            last_messages = self.memory.messages[-3:]  # Look at recent messages
+            for msg in reversed(last_messages):
+                if msg.role == "assistant" and msg.content:
+                    # Check if the message contains a question
+                    if self._contains_question(msg.content):
+                        logger.info("Agent asked a question, waiting for user input")
+                        self._awaiting_user_input = True
+                        # Set the state to WAITING_FOR_INPUT to pause the execution loop
+                        self.state = AgentState.WAITING_FOR_INPUT
+                        return False
+                    break
+        
+        return result
+    
+    def _contains_question(self, text: str) -> bool:
+        """
+        Check if the text contains a question that should pause for user input.
+        
+        Args:
+            text: The text to check for questions
+            
+        Returns:
+            Boolean indicating if a question is present
+        """
+        # Check for question marks
+        if "?" in text:
+            return True
+            
+        # Check for common question phrases
+        question_phrases = [
+            r"could you",
+            r"can you",
+            r"would you",
+            r"please provide",
+            r"please specify",
+            r"what .* would you like",
+            r"which .* would you prefer",
+            r"how would you like",
+            r"do you want",
+            r"would you like",
+        ]
+        
+        for phrase in question_phrases:
+            if re.search(phrase, text.lower()):
+                return True
+                
+        return False

@@ -3,7 +3,7 @@ import argparse
 import asyncio
 import sys
 
-from app.agent.mcp import MCPAgent
+from app.agent.mcp import MCPAgent, AgentState
 from app.agent.data_analytics_mcp import DataAnalyticsMCPAgent
 from app.config import config
 from app.logger import logger
@@ -23,9 +23,11 @@ class MCPRunner:
         else:
             self.agent = MCPAgent()
             logger.info("Using default MCPAgent")
-        
+
         # Track initialization state
         self.initialized = False
+        # Track conversation state
+        self.conversation_active = True
 
     async def initialize(
         self,
@@ -35,7 +37,7 @@ class MCPRunner:
         """Initialize the MCP agent with the appropriate connection."""
         if self.initialized:
             return
-            
+
         logger.info(f"Initializing agent with {connection_type} connection...")
 
         if connection_type == "stdio":
@@ -67,33 +69,58 @@ class MCPRunner:
     async def run_default(self) -> None:
         """Run the agent in default mode with continuous prompts."""
         print("\nMCP Data Analytics Agent (type 'exit' to quit)\n")
-        
-        while True:
-            prompt = input("\nEnter your prompt: ")
-            
-            # Check for exit command
-            if prompt.lower() in ["exit", "quit", "q"]:
-                break
-                
-            if not prompt.strip():
-                logger.warning("Empty prompt provided. Please try again.")
-                continue
 
-            logger.warning("Processing your request...")
+        # Initialize conversation state
+        self.conversation_active = True
+        current_conversation_id = 1
+
+        while self.conversation_active:
             try:
+                prompt = input("\nEnter your prompt: ")
+
+                # Check for exit command
+                if prompt.lower() in ["exit", "quit", "q"]:
+                    self.conversation_active = False
+                    break
+
+                if not prompt.strip():
+                    logger.warning("Empty prompt provided. Please try again.")
+                    continue
+
+                logger.warning("Processing your request...")
+
+                # Run the agent without cleaning up after each request
                 response = await self.agent.run(prompt)
+
+                # Print the response
                 print(f"\nAgent: {response}")
                 logger.info("Request processing completed.")
+
+                # Check if agent is waiting for input - skip cleanup in that case
+                if hasattr(self.agent, 'state') and self.agent.state == AgentState.WAITING_FOR_INPUT:
+                    logger.info("Agent is waiting for user input - maintaining connection")
+                    continue
+
+                # Increment conversation ID for the next request
+                current_conversation_id += 1
+
             except Exception as e:
+                # Log the error but don't exit - allow the user to try again
                 logger.error(f"Error processing request: {str(e)}", exc_info=True)
                 print(f"\nError: {str(e)}")
+                print("You can try another prompt or type 'exit' to quit.")
+                # Continue the loop to allow more prompts
+                continue
 
     async def cleanup(self) -> None:
         """Clean up agent resources."""
         if self.initialized:
-            await self.agent.cleanup()
-            logger.info("Session ended")
-            self.initialized = False
+            # Only clean up if we're truly done with the conversation
+            if not hasattr(self.agent, 'state') or self.agent.state != AgentState.WAITING_FOR_INPUT:
+                await self.agent.cleanup()
+                logger.info("Session ended")
+                self.initialized = False
+                self.conversation_active = False
 
 
 def parse_args() -> argparse.Namespace:
@@ -149,7 +176,8 @@ async def run_mcp() -> None:
         sys.exit(1)
     finally:
         # Only cleanup at the end of the session
-        await runner.cleanup()
+        if runner.conversation_active:
+            await runner.cleanup()
 
 
 if __name__ == "__main__":

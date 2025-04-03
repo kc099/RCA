@@ -19,7 +19,7 @@ class DataAnalyticsFilter:
         'report', 'dashboard', 'excel', 'csv', 'pandas', 'numpy', 'matplotlib',
         'seaborn', 'aggregate', 'groupby', 'filter', 'sort', 'query',
         'calculate', 'compute', 'forecast', 'predict', 'classify',
-        'summarize', 'distribution', 'outlier', 'clean', 'preprocess'
+        'summarize', 'distribution', 'outlier', 'clean', 'preprocess', 'who', 'are', 'you'
     }
 
     # Default keywords indicating non-analytics tasks

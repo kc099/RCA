@@ -33,6 +33,7 @@ class MCPAgent(ToolCallAgent):
     # Track tool schemas to detect changes
     tool_schemas: Dict[str, Dict[str, Any]] = Field(default_factory=dict)
     _refresh_tools_interval: int = 5  # Refresh tools every N steps
+    _steps_since_refresh: int = 0  # Counter for steps since last refresh
 
     # Special tool names that should trigger termination
     special_tool_names: List[str] = Field(default_factory=lambda: ["terminate"])
@@ -177,9 +178,27 @@ class MCPAgent(ToolCallAgent):
 
     async def run(self, request: Optional[str] = None) -> str:
         """Run the agent with cleanup when done."""
-        try:
-            result = await super().run(request)
-            return result
-        finally:
-            # Ensure cleanup happens even if there's an error
-            await self.cleanup()
+        if self.state == AgentState.WAITING_FOR_INPUT:
+            # If we were waiting for input, reset the state and continue
+            self.state = AgentState.IDLE
+            logger.info("Resuming from WAITING_FOR_INPUT state")
+
+        # Reset step counter for new requests
+        self.current_step = 0
+
+        response = await super().run(request)
+
+        # Special handling for WAITING_FOR_INPUT state
+        if self.state == AgentState.WAITING_FOR_INPUT:
+            logger.info("Agent is waiting for user input, preserving connection")
+            return response
+
+        # Only refresh tools if we're not waiting for input
+        if self._refresh_tools_interval > 0:
+            if self._steps_since_refresh >= self._refresh_tools_interval:
+                await self._refresh_tools()
+                self._steps_since_refresh = 0
+            else:
+                self._steps_since_refresh += 1
+
+        return response

@@ -134,7 +134,9 @@ class BaseAgent(BaseModel, ABC):
         results: List[str] = []
         async with self.state_context(AgentState.RUNNING):
             while (
-                self.current_step < self.max_steps and self.state != AgentState.FINISHED
+                self.current_step < self.max_steps 
+                and self.state != AgentState.FINISHED
+                and self.state != AgentState.WAITING_FOR_INPUT
             ):
                 self.current_step += 1
                 logger.info(f"Executing step {self.current_step}/{self.max_steps}")
@@ -147,9 +149,13 @@ class BaseAgent(BaseModel, ABC):
                 results.append(f"Step {self.current_step}: {step_result}")
 
             if self.current_step >= self.max_steps:
+                logger.info("Reached max steps, resetting agent state")
                 self.current_step = 0
                 self.state = AgentState.IDLE
-                results.append(f"Terminated: Reached max steps ({self.max_steps})")
+            elif self.state == AgentState.WAITING_FOR_INPUT:
+                logger.info("Agent is waiting for user input, pausing execution")
+                # Don't reset current_step so we can continue from where we left off
+                # Don't change state since we want to stay in WAITING_FOR_INPUT
         await SANDBOX_CLIENT.cleanup()
         return "\n".join(results) if results else "No steps executed"
 
