@@ -15,7 +15,7 @@ from mcp.server.fastmcp import FastMCP
 from app.logger import logger
 from app.tool.base import BaseTool
 from app.resource.base import BaseResource
-from app.tool.bash import Bash
+from app.tool.file_saver import FileSaver
 from app.tool.browser_use_tool import BrowserUseTool
 from app.tool.excel_tool import ExcelTool
 from app.tool.mysql_rw import MySQLRWTool
@@ -38,7 +38,7 @@ class MCPServer:
         self.resources: Dict[str, BaseResource] = {}
 
         # Initialize standard tools
-        self.tools["bash"] = Bash()
+        self.tools["file_saver"] = FileSaver()
         self.tools["browser"] = BrowserUseTool()
         self.tools["editor"] = StrReplaceEditor()
         self.tools["mysql_rw"] = MySQLRWTool()
@@ -221,6 +221,7 @@ class MCPServer:
         python_tool = PythonExecute()
         terminate_tool = Terminate()
         string_tool = StrReplaceEditor()
+        file_saver_tool = FileSaver()  # Create an instance of FileSaver
 
         # Initialize Excel tool
         excel_tool = ExcelTool()
@@ -231,7 +232,7 @@ class MCPServer:
         self.register_tool(python_tool)
         self.register_tool(terminate_tool)
         self.register_tool(string_tool)
-        #self.register_tool(excel_tool)
+        self.register_tool(file_saver_tool)  # Register the instance, not the class
 
         # Initialize MySQL read/write tool with remote connection parameters
         await mysql_rw_tool.initialize(

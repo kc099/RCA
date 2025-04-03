@@ -38,6 +38,17 @@ class Manus(ExcelAgent):
         )
     )
 
+    async def run(self, request: str) -> str:
+        """Process the request after moderation check."""
+        # Check if request is allowed by the moderator
+        is_allowed, reason = DataAnalyticsModerator.is_data_analytics_request(request)
+        
+        if not is_allowed:
+            return f"Request denied: {reason}. Please provide a data analytics related request."
+            
+        # Process allowed request
+        return await super().run(request)
+
     async def think(self) -> bool:
         """Process current state and decide next actions with appropriate context."""
         # Store original prompt
