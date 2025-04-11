@@ -24,6 +24,7 @@ from app.tool.python_execute import PythonExecute
 from app.tool.terminate import Terminate
 from app.tool.db_utils import patch_aiomysql_connection, patch_asyncpg_connection
 from app.resource.postgres_data import PostgreSQLResource
+from app.tool.file_saver import FileSaver
 
 # Patch database connections to handle event loop closed errors
 patch_aiomysql_connection()
@@ -43,6 +44,7 @@ class MCPServer:
         self.tools["editor"] = StrReplaceEditor()
         self.tools["mysql_rw"] = MySQLRWTool()
         self.tools["terminate"] = Terminate()
+        self.tools["file_saver"] = FileSaver()
 
         # Initialize resources
         self.resources["postgres_data"] = PostgreSQLResource()
@@ -221,6 +223,7 @@ class MCPServer:
         python_tool = PythonExecute()
         terminate_tool = Terminate()
         string_tool = StrReplaceEditor()
+        file_saver_tool = FileSaver()
 
         # Initialize Excel tool
         excel_tool = ExcelTool()
@@ -231,6 +234,7 @@ class MCPServer:
         self.register_tool(python_tool)
         self.register_tool(terminate_tool)
         self.register_tool(string_tool)
+        self.register_tool(file_saver_tool)
         #self.register_tool(excel_tool)
 
         # Initialize MySQL read/write tool with remote connection parameters
