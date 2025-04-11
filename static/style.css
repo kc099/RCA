@@ -88,19 +88,61 @@ body {
     display: flex;
     flex: 1;
     overflow: hidden;
+    position: relative;
 }
 
 /* Chat Panel */
 .chat-panel {
     width: 35%;
-    min-width: 300px;
-    max-width: 450px;
+    min-width: 250px;
+    max-width: 50%;
     display: flex;
     flex-direction: column;
     border-right: 1px solid #ddd;
     background-color: white;
+    position: relative;
+    transition: width 0.05s ease;
 }
 
+.panel-resize-handle {
+    width: 6px;
+    cursor: col-resize;
+    background-color: #e0e0e0;
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 10;
+}
+
+.panel-resize-handle::after {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 2px;
+    height: 30px;
+    background-color: #aaa;
+    border-radius: 2px;
+}
+
+.panel-resize-handle:hover,
+.panel-resize-handle.resizing {
+    background-color: var(--primary-color);
+}
+
+.panel-resize-handle:hover::after,
+.panel-resize-handle.resizing::after {
+    background-color: white;
+}
+
+.content-container.resizing {
+    cursor: col-resize;
+    user-select: none;
+}
+
+/* Chat Panel */
 .chat-header {
     padding: 12px 15px;
     border-bottom: 1px solid var(--border-color);

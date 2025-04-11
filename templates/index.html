@@ -3,13 +3,13 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>OpenManus Local Version</title>
+    <title>RCA Local Version</title>
     <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
     <div class="app">
         <div class="header">
-            <div class="title">OpenManus Local Version</div>
+            <div class="title">RCA Local Version</div>
             <div class="header-actions">
                 <select id="language-select" aria-label="Select language">
                     <option value="en">English</option>
@@ -24,7 +24,7 @@
         
         <div class="content-container">
             <!-- Left chat panel -->
-            <div class="chat-panel">
+            <div class="chat-panel" id="chat-panel">
                 <div class="chat-header">
                     <h2>Chat</h2>
                 </div>
@@ -34,7 +34,7 @@
                 </div>
                 <div id="task-container" class="task-container">
                     <div class="welcome-message">
-                        <h2>Welcome to OpenManus Local Version</h2>
+                        <h2>Welcome to RCA Local Version</h2>
                         <p>Please enter a task prompt to start a new task</p>
                     </div>
                     <div id="log-container" class="step-container"></div>
@@ -49,6 +49,9 @@
                     <button onclick="createTask()">Send</button>
                 </div>
             </div>
+            
+            <!-- Resize handle -->
+            <div class="panel-resize-handle" id="panel-resize-handle"></div>
             
             <!-- Right visualization panel -->
             <div class="visualization-panel">

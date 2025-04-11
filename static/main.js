@@ -947,83 +947,115 @@ function loadHistory() {
     });
 }
 
+// Panel resize functionality
+function initializePanelResize() {
+    const chatPanel = document.getElementById('chat-panel');
+    const resizeHandle = document.getElementById('panel-resize-handle');
+    const contentContainer = document.querySelector('.content-container');
+    
+    if (!chatPanel || !resizeHandle || !contentContainer) return;
+    
+    let isResizing = false;
+    let startX, startWidth;
+    
+    // Initialize resize handle position
+    resizeHandle.style.left = `${chatPanel.offsetWidth}px`;
+    
+    // When user presses mouse button on the resize handle
+    resizeHandle.addEventListener('mousedown', function(e) {
+        isResizing = true;
+        startX = e.clientX;
+        startWidth = chatPanel.offsetWidth;
+        
+        resizeHandle.classList.add('resizing');
+        contentContainer.classList.add('resizing');
+        
+        e.preventDefault();
+    });
+    
+    // When user moves the mouse after pressing the resize handle
+    document.addEventListener('mousemove', function(e) {
+        if (!isResizing) return;
+        
+        // Calculate new width
+        const containerWidth = contentContainer.offsetWidth;
+        const newWidth = startWidth + (e.clientX - startX);
+        
+        // Apply constraints: min-width 250px, max-width 50% of container
+        const minWidth = 250;
+        const maxWidth = containerWidth * 0.5;
+        
+        let appliedWidth = Math.max(minWidth, Math.min(newWidth, maxWidth));
+        
+        // Update chat panel width
+        chatPanel.style.width = `${appliedWidth}px`;
+        
+        // Update resize handle position
+        resizeHandle.style.left = `${appliedWidth}px`;
+    });
+    
+    // When user releases the mouse button
+    document.addEventListener('mouseup', function() {
+        if (isResizing) {
+            isResizing = false;
+            resizeHandle.classList.remove('resizing');
+            contentContainer.classList.remove('resizing');
+        }
+    });
+}
+
 document.addEventListener('DOMContentLoaded', () => {
     // Check configuration status on startup
     checkConfigStatus();
 
+    // Load task history
     loadHistory();
 
+    // Setup language selector
+    const languageSelect = document.getElementById('language-select');
+    if (languageSelect) {
+        languageSelect.addEventListener('change', function() {
+            setLanguage(this.value);
+        });
+    }
+
+    // Setup configuration button event
     const configButton = document.getElementById('config-button');
     if (configButton) {
-        configButton.addEventListener('click', () => {
+        configButton.addEventListener('click', function() {
             fetch('/config/status')
-            .then(response => response.json())
-            .then(data => {
-                console.log(data);
-                if (data.status === 'exists' && data.config) {
-                    showConfigModal(data.config);
-                } else if (data.status === 'missing' && data.example_config) {
+                .then(response => response.json())
+                .then(data => {
                     showConfigModal(data.example_config);
-                } else if (data.status === 'no_example') {
-                    alert('Error: Missing configuration example file! Please ensure that the config/config.example.toml file exists.');
-                } else if (data.status === 'error') {
-                    alert('Configuration error: ' + data.message);
-                } else {
-                    alert('Unable to load configuration. Please check if config.example.toml exists.');
+                })
+                .catch(error => {
+                    console.error('Config status check failed:', error);
+                });
+        });
+    }
+
+    // Initialize task history click events
+    const taskList = document.getElementById('task-list');
+    if (taskList) {
+        taskList.addEventListener('click', function(event) {
+            const taskCard = event.target.closest('.task-card');
+            if (taskCard) {
+                const taskId = taskCard.dataset.taskId;
+                if (taskId) {
+                    setupSSE(taskId);
+                    
+                    // Highlight the selected task
+                    document.querySelectorAll('.task-card').forEach(card => {
+                        card.classList.remove('active');
+                    });
+                    taskCard.classList.add('active');
                 }
-            })
-            .catch(error => {
-                console.error('Failed to fetch configuration:', error);
-                alert('Failed to load configuration. Please check if the server is running and try again.');
-            });
-        });
-    }
-
-    document.getElementById('prompt-input').addEventListener('keydown', (e) => {
-        if (e.key === 'Enter' && !e.shiftKey) {
-            e.preventDefault();
-            createTask();
-        }
-    });
-
-    const historyToggle = document.getElementById('history-toggle');
-    if (historyToggle) {
-        historyToggle.addEventListener('click', () => {
-            const historyPanel = document.getElementById('history-panel');
-            if (historyPanel) {
-                historyPanel.classList.toggle('open');
-                historyToggle.classList.toggle('active');
             }
         });
     }
 
-    const clearButton = document.getElementById('clear-btn');
-    if (clearButton) {
-        clearButton.addEventListener('click', () => {
-            document.getElementById('prompt-input').value = '';
-            document.getElementById('prompt-input').focus();
-        });
-    }
-
-    // Add keyboard event listener to close modal boxes
-    document.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape') {
-            const imageModal = document.getElementById('image-modal');
-            if (imageModal && imageModal.classList.contains('active')) {
-                imageModal.classList.remove('active');
-            }
-
-            const pythonModal = document.getElementById('python-modal');
-            if (pythonModal && pythonModal.classList.contains('active')) {
-                pythonModal.classList.remove('active');
-            }
-
-            const configModal = document.getElementById('config-modal');
-            if (configModal && configModal.classList.contains('active') && !isConfigRequired()) {
-                configModal.classList.remove('active');
-            }
-        }
-    });
+    // Initialize panel resize functionality
+    initializePanelResize();
 });
 
 function isConfigRequired() {
