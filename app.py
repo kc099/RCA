@@ -4,12 +4,14 @@ import threading
 import tomllib
 import uuid
 import webbrowser
+from contextlib import asynccontextmanager
 from datetime import datetime
 from functools import partial
 from json import dumps
 from pathlib import Path
+from typing import Optional
 
-from fastapi import Body, FastAPI, HTTPException, Request
+from fastapi import Body, FastAPI, HTTPException, Request, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import (
     FileResponse,
@@ -23,9 +25,22 @@ from pydantic import BaseModel
 
 import sys
 from app.agent.mcp import MCPAgent
+from app.auth.jwt import get_current_active_user, get_current_admin_user, jwt, ALGORITHM, SECRET_KEY, get_user_by_username, get_user_from_token
+from app.auth.models import UserInDB
+from app.auth.repository import create_initial_admin
+from app.auth import router as auth_router
 
 
-app = FastAPI()
+# Define lifespan context manager
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Create the initial admin user if no users exist
+    await create_initial_admin()
+    yield
+
+
+# Create FastAPI app with lifespan
+app = FastAPI(lifespan=lifespan)
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
@@ -37,6 +52,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Include auth router
+app.include_router(auth_router.router)
 
 
 class Task(BaseModel):
@@ -102,8 +120,21 @@ async def index(request: Request):
     return templates.TemplateResponse("index.html", {"request": request})
 
 
+@app.get("/login", response_class=HTMLResponse)
+async def login_page(request: Request):
+    return templates.TemplateResponse("login.html", {"request": request})
+
+
+@app.get("/register", response_class=HTMLResponse)
+async def register_page(request: Request):
+    return templates.TemplateResponse("register.html", {"request": request})
+
+
 @app.get("/download")
-async def download_file(file_path: str):
+async def download_file(
+    file_path: str,
+    current_user: UserInDB = Depends(get_current_active_user)
+):
     if not os.path.exists(file_path):
         raise HTTPException(status_code=404, detail="File not found")
 
@@ -111,13 +142,16 @@ async def download_file(file_path: str):
 
 
 @app.post("/tasks")
-async def create_task(prompt: str = Body(..., embed=True)):
+async def create_task(
+    prompt: str = Body(..., embed=True),
+    current_user: UserInDB = Depends(get_current_active_user)
+):
     task = task_manager.create_task(prompt)
     asyncio.create_task(run_task(task.id, prompt))
     return {"task_id": task.id}
 
 
-from app.agent.manus import Manus
+# from app.agent.manus import Manus
 
 
 async def run_task(task_id: str, prompt: str):
@@ -191,25 +225,60 @@ async def run_task(task_id: str, prompt: str):
 
 
 @app.get("/tasks/{task_id}/events")
-async def task_events(task_id: str):
+async def task_events(
+    task_id: str,
+    request: Request,
+    token: Optional[str] = None,
+    current_user: Optional[UserInDB] = None
+):
+    # Allow authentication via URL token parameter (for EventSource connections)
+    if token and not current_user:
+        try:
+            user = await get_user_from_token(token)
+            if user:
+                current_user = user
+                print(f"[SSE] Authenticated user {user.username} via token parameter")
+            else:
+                print(f"[SSE] Invalid token provided in URL parameter")
+                return StreamingResponse(
+                    iter([f"event: error\ndata: {dumps({'message': 'Invalid or expired token'})}\n\n"]),
+                    media_type="text/event-stream",
+                )
+        except Exception as e:
+            print(f"[SSE] Token authentication error: {str(e)}")
+            return StreamingResponse(
+                iter([f"event: error\ndata: {dumps({'message': 'Authentication failed'})}\n\n"]),
+                media_type="text/event-stream",
+            )
+    
+    # If no user is authenticated by any method, return error
+    if not current_user:
+        return StreamingResponse(
+            iter([f"event: error\ndata: {dumps({'message': 'Authentication required'})}\n\n"]),
+            media_type="text/event-stream",
+        )
+    
     async def event_generator():
         if task_id not in task_manager.queues:
             yield f"event: error\ndata: {dumps({'message': 'Task not found'})}\n\n"
             return
-
+        
         queue = task_manager.queues[task_id]
-
+        
         task = task_manager.tasks.get(task_id)
         if task:
             yield f"event: status\ndata: {dumps({'type': 'status', 'status': task.status, 'steps': task.steps})}\n\n"
-
+        
+        # Send an initial connection success message
+        yield f"event: connected\ndata: {dumps({'message': 'Connected to event stream'})}\n\n"
+        
         while True:
             try:
                 event = await queue.get()
                 formatted_event = dumps(event)
-
+                
                 yield ": heartbeat\n\n"
-
+                
                 if event["type"] == "complete":
                     yield f"event: complete\ndata: {formatted_event}\n\n"
                     break
@@ -225,7 +294,7 @@ async def task_events(task_id: str):
                     yield f"event: {event['type']}\ndata: {formatted_event}\n\n"
                 else:
                     yield f"event: {event['type']}\ndata: {formatted_event}\n\n"
-
+                
             except asyncio.CancelledError:
                 print(f"Client disconnected for task {task_id}")
                 break
@@ -233,7 +302,7 @@ async def task_events(task_id: str):
                 print(f"Error in event stream: {str(e)}")
                 yield f"event: error\ndata: {dumps({'message': str(e)})}\n\n"
                 break
-
+    
     return StreamingResponse(
         event_generator(),
         media_type="text/event-stream",
@@ -246,7 +315,9 @@ async def task_events(task_id: str):
 
 
 @app.get("/tasks")
-async def get_tasks():
+async def get_tasks(
+    current_user: UserInDB = Depends(get_current_active_user)
+):
     sorted_tasks = sorted(
         task_manager.tasks.values(), key=lambda task: task.created_at, reverse=True
     )
@@ -257,14 +328,19 @@ async def get_tasks():
 
 
 @app.get("/tasks/{task_id}")
-async def get_task(task_id: str):
+async def get_task(
+    task_id: str,
+    current_user: UserInDB = Depends(get_current_active_user)
+):
     if task_id not in task_manager.tasks:
         raise HTTPException(status_code=404, detail="Task not found")
     return task_manager.tasks[task_id]
 
 
 @app.get("/config/status")
-async def check_config_status():
+async def check_config_status(
+    current_user: UserInDB = Depends(get_current_admin_user)
+):
     config_path = Path(__file__).parent / "config" / "config.toml"
     example_config_path = Path(__file__).parent / "config" / "config.example.toml"
 
@@ -287,7 +363,10 @@ async def check_config_status():
 
 
 @app.post("/config/save")
-async def save_config(config_data: dict = Body(...)):
+async def save_config(
+    config_data: dict = Body(...),
+    current_user: UserInDB = Depends(get_current_admin_user)
+):
     try:
         config_dir = Path(__file__).parent / "config"
         config_dir.mkdir(exist_ok=True)
@@ -320,6 +399,22 @@ async def save_config(config_data: dict = Body(...)):
 
         return {"status": "success"}
     except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+@app.post("/auth/log")
+async def auth_log_endpoint(request: Request):
+    try:
+        body = await request.json()
+        message = body.get("message", "No message")
+        details = body.get("details", {})
+
+        print(f"[AUTH LOG] {message}")
+        if details:
+            print(f"[AUTH LOG] Details: {details}")
+        return {"status": "logged"}
+    except Exception as e:
+        print(f"[AUTH LOG ERROR] {str(e)}")
         return {"status": "error", "message": str(e)}
 
 

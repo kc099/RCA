@@ -1,0 +1,252 @@
+# Authentication System Documentation for RCA Project
+
+## Overview
+
+The RCA project implements a secure authentication system based on OAuth 2.0 with JWT (JSON Web Tokens). The system provides robust user authentication, session management, and access control with proper token lifecycle management.
+
+## Architecture
+
+The authentication system follows a modern token-based architecture:
+
+1. **Server-side Components**:
+   - User repository with SQLite database storage
+   - JWT token generation and validation
+   - Protected endpoints with role-based access control
+   - Token lifecycle management
+
+2. **Client-side Components**:
+   - Login and registration forms
+   - Token storage and management
+   - Authenticated API requests
+   - Automatic token validation and refresh
+
+## Implementation Details
+
+### Backend (Python/FastAPI)
+
+#### 1. JWT Module (`app/auth/jwt.py`)
+
+This module is the core of the authentication system, responsible for:
+
+- Generating JWT tokens with appropriate expiration times
+- Token validation and verification
+- Managing active tokens (one token per user)
+- Role-based access control
+
+Key implementation features:
+```python
+# Token management
+active_tokens: Dict[str, str] = {}  # username -> token
+
+def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
+    # Generate token, set expiration, and store as active token
+    
+def is_token_valid(token: str, username: str) -> bool:
+    # Validate token is active and not expired
+
+def get_current_user(token: str = Depends(oauth2_scheme)) -> UserInDB:
+    # Extract user from token with proper validation
+```
+
+#### 2. Authentication Router (`app/auth/router.py`)
+
+Provides API endpoints for:
+- User registration
+- Login (token generation)
+- Token validation
+- User management
+
+Key endpoints:
+```python
+@router.post("/token", response_model=Token)
+async def login_for_access_token(form_data: OAuth2PasswordRequestForm):
+    # Authenticate user and return JWT token
+
+@router.post("/users", response_model=User)
+async def create_user(user_create: UserCreate):
+    # Register new user
+
+@router.get("/validate-token")
+async def validate_token(current_user: UserInDB = Depends(get_current_active_user)):
+    # Validate the current user's token
+```
+
+#### 3. Main Application (`app.py`)
+
+Integrates authentication with the main application:
+- Mounts the authentication router
+- Protects relevant endpoints with authentication dependencies
+- Handles authentication for EventSource connections
+
+Notable authentication integration:
+```python
+@app.get("/tasks/{task_id}/events")
+async def task_events(
+    task_id: str,
+    request: Request,
+    token: Optional[str] = None,
+    current_user: Optional[UserInDB] = None
+):
+    # Support both dependency injection and URL token authentication
+    # Particularly important for EventSource connections
+```
+
+### Frontend (JavaScript/HTML)
+
+#### 1. Authentication Module (`static/auth.js`)
+
+Handles the client-side authentication logic:
+- Login and registration form handling
+- Token storage and retrieval
+- Token validation and refresh
+- Authentication status checks
+- Automatic redirection for unauthenticated users
+
+Key functions:
+```javascript
+// Token validation and refresh
+async function checkAndRefreshToken() {
+    // Check locally stored token and validate with server
+}
+
+// Authentication status check
+function isAuthenticated() {
+    // Verify token exists and not expired
+}
+
+// Fetch wrapper for authenticated requests
+window.fetch = function(url, options = {}) {
+    // Automatically add token to API requests
+    // Handle 401 unauthorized responses
+}
+```
+
+#### 2. Main Application (`static/main.js`)
+
+Integrates authentication with the application features:
+- Protects API requests with authentication tokens
+- Handles authentication for EventSource connections
+- Provides proper error handling for authentication failures
+
+EventSource authentication:
+```javascript
+async function setupSSE(taskId) {
+    // Validate token before connecting
+    // Add token to EventSource URL for authentication
+    // Handle authentication errors
+}
+```
+
+#### 3. HTML Templates
+
+Authentication UI components in:
+- `templates/login.html`: Login form
+- `templates/register.html`: Registration form
+- `templates/index.html`: Main application with authenticated user interface
+
+## Token Lifecycle Management
+
+The authentication system implements a complete token lifecycle:
+
+1. **Token Creation**:
+   - Generated upon successful login
+   - Includes user identity and roles
+   - Sets appropriate expiration time
+   - Tracked in server-side active_tokens registry
+
+2. **Token Storage**:
+   - Client stores in localStorage
+   - Server maintains active token registry
+
+3. **Token Usage**:
+   - Automatically included in API requests
+   - Used for EventSource authentication
+   - Verified on server for every protected request
+
+4. **Token Validation**:
+   - Client-side expiration checks
+   - Server-side validation against active tokens
+   - Protection against token replay attacks
+
+5. **Token Expiration**:
+   - Automatic detection of expired tokens
+   - Proper cleanup of expired tokens
+   - Redirection to login page
+
+6. **Token Invalidation**:
+   - Explicit logout
+   - Automatic invalidation of old tokens when new ones are issued
+   - Server-side token registry cleanup
+
+## Security Best Practices for Production Deployment
+
+1. **Secret Key Management**:
+   - Store SECRET_KEY in environment variables, not in code
+   - Use a secure random generator for production keys
+   - Consider using a secret management service (AWS Secrets Manager, HashiCorp Vault)
+
+   Example implementation:
+   ```python
+   # Development (unsafe, for testing only)
+   SECRET_KEY = secrets.token_hex(32)
+   
+   # Production (recommended)
+   SECRET_KEY = os.environ.get("AUTH_SECRET_KEY")
+   if not SECRET_KEY:
+       raise RuntimeError("AUTH_SECRET_KEY environment variable not set")
+   ```
+
+2. **HTTPS Implementation**:
+   - Always use HTTPS in production
+   - Set the secure flag on cookies
+   - Implement HSTS headers
+
+3. **Token Security**:
+   - Keep token expiration times short (30-60 minutes)
+   - Implement token refresh mechanism for long sessions
+   - Use HttpOnly cookies for sensitive applications instead of localStorage
+
+4. **Database Security**:
+   - Use a production-grade database (PostgreSQL, MySQL)
+   - Implement database connection pooling
+   - Use parameterized queries to prevent SQL injection
+
+5. **Rate Limiting**:
+   - Implement rate limiting on login endpoints
+   - Add delay or account lockout after failed attempts
+   - Monitor for brute force attacks
+
+6. **Monitoring and Logging**:
+   - Log authentication events securely
+   - Monitor for suspicious activity
+   - Implement alerts for unusual authentication patterns
+
+7. **CORS Configuration**:
+   - Set appropriate CORS headers
+   - Restrict origins to your domain only
+
+8. **Session Management**:
+   - Implement proper session termination
+   - Allow users to view/terminate active sessions
+   - Consider IP-based session validation for sensitive applications
+
+## Additional Considerations
+
+1. **Multi-factor Authentication**:
+   - Consider implementing TOTP or other 2FA methods for sensitive applications
+   - Integration with OAuth providers (Google, Microsoft, GitHub)
+
+2. **Password Policies**:
+   - Enforce strong password requirements
+   - Add password expiration and history
+   - Implement secure password reset flows
+
+3. **Role-Based Access Control**:
+   - Expand the current scopes system
+   - Add fine-grained permissions
+   - Implement hierarchical roles
+
+4. **Scaling Considerations**:
+   - Move token storage to Redis for distributed deployments
+   - Consider stateless JWT validation for horizontal scaling
+   - Implement centralized authentication service for microservice architectures

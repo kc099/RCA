@@ -1,7 +1,424 @@
+// Add a debug log helper
+function mainLog(message, data = null) {
+    console.log(`[Main] ${message}`, data || '');
+}
+
+// Main application initialization
+document.addEventListener('DOMContentLoaded', () => {
+    mainLog('Main script loaded');
+    
+    // Only proceed if we're authenticated and on the main page
+    if ((window.location.pathname === '/' || window.location.pathname === '') && 
+        typeof isAuthenticated === 'function' && isAuthenticated()) {
+        
+        mainLog('User is authenticated, setting up interface');
+        setupUserMenu();
+        initializeApp();
+    } else {
+        mainLog('Not on main page or not authenticated, skipping app initialization');
+    }
+});
+
+function setupUserMenu() {
+    const username = localStorage.getItem('username');
+    const userMenu = document.getElementById('user-menu');
+    const usernameDisplay = document.getElementById('username-display');
+    const userAvatar = document.getElementById('user-avatar');
+
+    if (username && usernameDisplay) {
+        usernameDisplay.textContent = username;
+        
+        // Create avatar with first letter of username
+        if (userAvatar) {
+            userAvatar.textContent = username.charAt(0).toUpperCase();
+        }
+        
+        // Toggle user menu dropdown
+        if (userMenu) {
+            userMenu.addEventListener('click', function(e) {
+                e.stopPropagation();
+                userMenu.classList.toggle('active');
+            });
+            
+            // Close dropdown when clicking outside
+            document.addEventListener('click', function() {
+                userMenu.classList.remove('active');
+            });
+        }
+    }
+}
+
+function initializeApp() {
+    // Check configuration status on startup
+    checkConfigStatus();
+    
+    // Initialize panel resize
+    initializePanelResize();
+    
+    // Load task history
+    loadHistory();
+    
+    // Event listeners
+    document.getElementById('config-button').addEventListener('click', () => {
+        if (!isConfigRequired()) {
+            showConfigModal();
+        }
+    });
+    
+    // Setup task creation handling
+    setupTaskCreation();
+    
+    // Setup language selector
+    const languageSelect = document.getElementById('language-select');
+    if (languageSelect) {
+        languageSelect.addEventListener('change', function() {
+            setLanguage(this.value);
+        });
+    }
+    
+    // Initialize task history click events
+    const taskList = document.getElementById('task-list');
+    if (taskList) {
+        taskList.addEventListener('click', function(event) {
+            const taskCard = event.target.closest('.task-card');
+            if (taskCard) {
+                const taskId = taskCard.dataset.taskId;
+                if (taskId) {
+                    setupSSE(taskId);
+                    
+                    // Highlight the selected task
+                    document.querySelectorAll('.task-card').forEach(card => {
+                        card.classList.remove('active');
+                    });
+                    taskCard.classList.add('active');
+                }
+            }
+        });
+    }
+}
+
+// Setup task creation handling
+function setupTaskCreation() {
+    mainLog('Setting up task creation handling');
+    
+    // Add event listener for input field
+    const promptInput = document.getElementById('prompt-input');
+    if (promptInput) {
+        promptInput.addEventListener('keypress', function(event) {
+            if (event.key === 'Enter') {
+                createTask();
+            }
+        });
+    }
+    
+    // Add event listener for send button
+    const sendButton = promptInput.nextElementSibling;
+    if (sendButton) {
+        sendButton.addEventListener('click', createTask);
+    }
+}
+
+// Make createTask function available globally
+window.createTask = function() {
+    mainLog('Creating new task');
+    
+    const promptInput = document.getElementById('prompt-input');
+    const prompt = promptInput.value.trim();
+
+    if (!prompt) {
+        alert("Please enter a valid prompt");
+        promptInput.focus();
+        return;
+    }
+
+    if (currentEventSource) {
+        currentEventSource.close();
+        currentEventSource = null;
+    }
+
+    const container = document.getElementById('task-container');
+    container.innerHTML = '<div class="loading">Initializing task...</div>';
+
+    // Ensure we have the auth token
+    const token = localStorage.getItem('auth_token');
+    if (!token) {
+        mainLog('No auth token found, redirecting to login');
+        window.location.href = '/login';
+        return;
+    }
+    
+    // Make the API request with auth token
+    mainLog('Sending task creation request');
+    fetch('/tasks', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ prompt })
+    })
+    .then(response => {
+        if (response.status === 401) {
+            // Unauthorized, token invalid
+            mainLog('Unauthorized, redirecting to login');
+            window.location.href = '/login?session_expired=true';
+            return null;
+        }
+        return response.json();
+    })
+    .then(data => {
+        if (data) {
+            mainLog('Task created successfully', data);
+            promptInput.value = '';
+            setupSSE(data.task_id);
+        }
+    })
+    .catch(error => {
+        mainLog('Error creating task', error);
+        container.innerHTML = `<div class="error">Error creating task: ${error.message}</div>`;
+    });
+};
+
 let currentEventSource = null;
 let exampleApiKey = '';
 // Store output items that will be displayed in the visualization panel
 let outputItems = [];
+
+async function setupSSE(taskId) {
+    if (!taskId) {
+        mainLog('Invalid task ID provided to setupSSE:', taskId);
+        return;
+    }
+
+    // Clean up existing connection if any
+    if (currentEventSource) {
+        currentEventSource.close();
+        currentEventSource = null;
+    }
+
+    // Wait for token validation before connecting
+    const isValid = await window.checkAndRefreshToken();
+    if (!isValid) {
+        mainLog('Token validation failed, cannot setup EventSource');
+        const container = document.getElementById('task-container');
+        container.innerHTML = '<div class="error">Authentication error. Please <a href="/login">login</a> again.</div>';
+        return;
+    }
+
+    // Get auth token for the EventSource connection
+    const token = localStorage.getItem('auth_token');
+    if (!token) {
+        mainLog('No auth token found for EventSource connection');
+        window.location.href = '/login';
+        return;
+    }
+
+    // Create EventSource with token in URL for authentication
+    const eventSourceUrl = `/tasks/${taskId}/events?token=${encodeURIComponent(token)}`;
+    
+    // Show connecting message
+    const container = document.getElementById('task-container');
+    const stepContainer = ensureStepContainer(container);
+    const connectingElement = createStepElement('info', 'Connecting to task...', new Date().toLocaleTimeString());
+    stepContainer.appendChild(connectingElement);
+
+    // Set connection attempt counter
+    let connectionAttempts = 0;
+    const maxConnectionAttempts = 3;
+    
+    function connectEventSource() {
+        try {
+            mainLog('Creating EventSource connection', { url: eventSourceUrl, attempt: connectionAttempts + 1 });
+            currentEventSource = new EventSource(eventSourceUrl);
+            
+            currentEventSource.onopen = function() {
+                mainLog(`Connected to event stream for task ${taskId}`);
+                connectionAttempts = 0; // Reset counter on successful connection
+            };
+            
+            currentEventSource.onerror = function(error) {
+                mainLog('EventSource error:', error);
+                
+                // Handle connection closed
+                if (currentEventSource && currentEventSource.readyState === EventSource.CLOSED) {
+                    mainLog('Connection was closed');
+                    
+                    // Try to reconnect if we haven't exceeded max attempts
+                    if (connectionAttempts < maxConnectionAttempts) {
+                        connectionAttempts++;
+                        
+                        // Show reconnecting message
+                        const reconnectElement = createStepElement('warn', `Connection lost. Reconnecting (attempt ${connectionAttempts}/${maxConnectionAttempts})...`, new Date().toLocaleTimeString());
+                        stepContainer.appendChild(reconnectElement);
+                        
+                        // Wait before reconnecting
+                        setTimeout(() => {
+                            if (currentEventSource) {
+                                currentEventSource.close();
+                                currentEventSource = null;
+                            }
+                            connectEventSource();
+                        }, 2000); // 2 second delay before retry
+                        
+                        return;
+                    }
+                    
+                    // Max attempts reached, show error
+                    const errorElement = createStepElement('error', 'Failed to connect to server after multiple attempts. Please refresh the page and try again.', new Date().toLocaleTimeString());
+                    stepContainer.appendChild(errorElement);
+                }
+                
+                // Close connection on error
+                if (currentEventSource && connectionAttempts >= maxConnectionAttempts) {
+                    currentEventSource.close();
+                    currentEventSource = null;
+                }
+            };
+            
+            setupEventListeners(currentEventSource, stepContainer, container);
+        } catch (error) {
+            mainLog('Error creating EventSource:', error);
+            const errorElement = createStepElement('error', 'Error connecting to event stream: ' + error.message, new Date().toLocaleTimeString());
+            stepContainer.appendChild(errorElement);
+        }
+    }
+    
+    // Initial connection
+    connectEventSource();
+}
+
+// Separate function to set up event listeners to avoid code duplication
+function setupEventListeners(eventSource, stepContainer, container) {
+    // Initialize the log counter for this task
+    let lastId = 0;
+    
+    // Helper function to safely parse JSON
+    function safeJsonParse(data) {
+        try {
+            if (!data || data === 'undefined' || data === '') {
+                mainLog('Empty data received in safeJsonParse');
+                return { content: 'Empty response received', id: ++lastId, timestamp: new Date().toISOString() };
+            }
+            return JSON.parse(data);
+        } catch (e) {
+            mainLog('JSON Parse error:', e, 'Data:', data);
+            return { content: 'Error parsing response data', id: ++lastId, timestamp: new Date().toISOString() };
+        }
+    }
+
+    // Handle different event types
+    eventSource.addEventListener('connected', function(event) {
+        mainLog('Connected to event stream', event.data);
+        const data = safeJsonParse(event.data);
+        const connectionElement = createStepElement('info', 'Connected to server', new Date().toLocaleTimeString());
+        stepContainer.appendChild(connectionElement);
+        
+        autoScroll(container);
+    });
+    
+    eventSource.addEventListener('step', function(event) {
+        mainLog('Received step event', event.data);
+        const data = safeJsonParse(event.data);
+        lastId = data.id || ++lastId;
+        
+        // Check if this step contains a visualization
+        const visualizationData = extractVisualization(data.content);
+        if (visualizationData) {
+            addVisualizationItem(visualizationData);
+        }
+        
+        // Format the step content - removing any extracted visualization if needed
+        const formattedContent = formatStepContent(data, 'step');
+        const stepElement = createStepElement('step', formattedContent, data.timestamp || new Date().toLocaleTimeString());
+        stepContainer.appendChild(stepElement);
+        
+        autoScroll(container);
+    });
+    
+    eventSource.addEventListener('log', function(event) {
+        mainLog('Received log event', event.data);
+        const data = safeJsonParse(event.data);
+        const formattedContent = formatStepContent(data, 'log');
+        const logElement = createStepElement('log', formattedContent, data.timestamp || new Date().toLocaleTimeString());
+        stepContainer.appendChild(logElement);
+        
+        autoScroll(container);
+    });
+    
+    eventSource.addEventListener('think', function(event) {
+        mainLog('Received think event', event.data);
+        const data = safeJsonParse(event.data);
+        const formattedContent = formatStepContent(data, 'think');
+        const thinkElement = createStepElement('think', formattedContent, data.timestamp || new Date().toLocaleTimeString());
+        stepContainer.appendChild(thinkElement);
+        
+        autoScroll(container);
+    });
+    
+    eventSource.addEventListener('tool', function(event) {
+        mainLog('Received tool event', event.data);
+        const data = safeJsonParse(event.data);
+        
+        // Check if the tool content contains a table or visualization
+        const visualizationData = extractVisualization(data.content);
+        if (visualizationData) {
+            addVisualizationItem(visualizationData);
+        }
+        
+        const formattedContent = formatStepContent(data, 'tool');
+        const toolElement = createStepElement('tool', formattedContent, data.timestamp || new Date().toLocaleTimeString());
+        stepContainer.appendChild(toolElement);
+        
+        autoScroll(container);
+    });
+    
+    eventSource.addEventListener('result', function(event) {
+        mainLog('Received result event', event.data);
+        const data = safeJsonParse(event.data);
+        
+        // Check if the result contains a table or visualization
+        const visualizationData = extractVisualization(data.content);
+        if (visualizationData) {
+            addVisualizationItem(visualizationData);
+        }
+        
+        const formattedContent = formatStepContent(data, 'result');
+        const resultElement = createStepElement('result', formattedContent, data.timestamp || new Date().toLocaleTimeString());
+        stepContainer.appendChild(resultElement);
+        
+        autoScroll(container);
+    });
+    
+    eventSource.addEventListener('error', function(event) {
+        mainLog('Received error event', event.data);
+        const data = safeJsonParse(event.data);
+        const errorElement = createStepElement('error', formatStepContent(data, 'error'), data.timestamp || new Date().toLocaleTimeString());
+        stepContainer.appendChild(errorElement);
+        
+        autoScroll(container);
+    });
+    
+    eventSource.addEventListener('complete', function(event) {
+        mainLog('Received complete event', event.data);
+        const data = safeJsonParse(event.data);
+        const completeElement = createStepElement('success', formatStepContent(data, 'complete'), data.timestamp || new Date().toLocaleTimeString());
+        stepContainer.appendChild(completeElement);
+        
+        autoScroll(container);
+        
+        if (eventSource) {
+            eventSource.close();
+            currentEventSource = null;
+        }
+        
+        // Refresh the task list to show the updated status
+        loadHistory();
+    });
+
+    eventSource.addEventListener('ping', function() {
+        // Just to keep the connection alive, no UI update needed
+    });
+}
 
 function checkConfigStatus() {
     fetch('/config/status')
@@ -175,200 +592,6 @@ function collectFormData() {
     return configData;
 }
 
-function createTask() {
-    const promptInput = document.getElementById('prompt-input');
-    const prompt = promptInput.value.trim();
-
-    if (!prompt) {
-        alert("Please enter a valid prompt");
-        promptInput.focus();
-        return;
-    }
-
-    if (currentEventSource) {
-        currentEventSource.close();
-        currentEventSource = null;
-    }
-
-    const container = document.getElementById('task-container');
-    container.innerHTML = '<div class="loading">Initializing task...</div>';
-
-    fetch('/tasks', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ prompt })
-    })
-    .then(response => response.json())
-    .then(data => {
-        // Server returns { task_id: "..." } instead of { id: "..." }
-        const taskId = data.task_id || data.id;
-        
-        if (taskId) {
-            setupSSE(taskId);
-            promptInput.value = '';
-        } else {
-            throw new Error('Invalid task response: missing task ID');
-        }
-    })
-    .catch(error => {
-        console.error('Error creating task:', error);
-        container.innerHTML = `<div class="error">Error creating task: ${error.message}</div>`;
-    });
-}
-
-// Event Source to handle real-time updates
-function setupSSE(taskId) {
-    if (!taskId) {
-        console.error('Invalid task ID provided to setupSSE:', taskId);
-        const container = document.getElementById('task-container');
-        container.innerHTML = '<div class="error">Error: Invalid task ID</div>';
-        return;
-    }
-
-    if (currentEventSource) {
-        currentEventSource.close();
-    }
-
-    currentEventSource = new EventSource(`/tasks/${taskId}/events`);
-    
-    const container = document.getElementById('task-container');
-    const stepContainer = ensureStepContainer(container);
-    
-    currentEventSource.onopen = function() {
-        console.log(`Connected to event stream for task ${taskId}`);
-    };
-    
-    currentEventSource.onerror = function(error) {
-        console.error('EventSource error:', error);
-        if (currentEventSource.readyState === EventSource.CLOSED) {
-            console.log('Connection was closed');
-        }
-        
-        // Handle error case
-        const errorElement = createStepElement('error', 'Error connecting to event stream. Please try again.', new Date().toLocaleTimeString());
-        stepContainer.appendChild(errorElement);
-        
-        // Close the connection on error
-        if (currentEventSource) {
-            currentEventSource.close();
-            currentEventSource = null;
-        }
-    };
-    
-    // Initialize the log counter for this task
-    let lastId = 0;
-    
-    // Helper function to safely parse JSON
-    function safeJsonParse(data) {
-        try {
-            return JSON.parse(data);
-        } catch (e) {
-            console.error('JSON Parse error:', e, 'Data:', data);
-            return { content: 'Error parsing response data', id: ++lastId, timestamp: new Date().toISOString() };
-        }
-    }
-    
-    // Handle different event types
-    currentEventSource.addEventListener('step', function(event) {
-        const data = safeJsonParse(event.data);
-        lastId = data.id || ++lastId;
-        
-        // Check if this step contains a visualization
-        const visualizationData = extractVisualization(data.content);
-        if (visualizationData) {
-            addVisualizationItem(visualizationData);
-        }
-        
-        // Format the step content - removing any extracted visualization if needed
-        const formattedContent = formatStepContent(data, 'step');
-        const stepElement = createStepElement('step', formattedContent, data.timestamp || new Date().toLocaleTimeString());
-        stepContainer.appendChild(stepElement);
-        
-        autoScroll(container);
-    });
-    
-    currentEventSource.addEventListener('log', function(event) {
-        const data = safeJsonParse(event.data);
-        const formattedContent = formatStepContent(data, 'log');
-        const logElement = createStepElement('log', formattedContent, data.timestamp || new Date().toLocaleTimeString());
-        stepContainer.appendChild(logElement);
-        
-        autoScroll(container);
-    });
-    
-    currentEventSource.addEventListener('think', function(event) {
-        const data = safeJsonParse(event.data);
-        const formattedContent = formatStepContent(data, 'think');
-        const thinkElement = createStepElement('think', formattedContent, data.timestamp || new Date().toLocaleTimeString());
-        stepContainer.appendChild(thinkElement);
-        
-        autoScroll(container);
-    });
-    
-    currentEventSource.addEventListener('tool', function(event) {
-        const data = safeJsonParse(event.data);
-        
-        // Check if the tool content contains a table or visualization
-        const visualizationData = extractVisualization(data.content);
-        if (visualizationData) {
-            addVisualizationItem(visualizationData);
-        }
-        
-        const formattedContent = formatStepContent(data, 'tool');
-        const toolElement = createStepElement('tool', formattedContent, data.timestamp || new Date().toLocaleTimeString());
-        stepContainer.appendChild(toolElement);
-        
-        autoScroll(container);
-    });
-    
-    currentEventSource.addEventListener('result', function(event) {
-        const data = safeJsonParse(event.data);
-        
-        // Check if the result contains a table or visualization
-        const visualizationData = extractVisualization(data.content);
-        if (visualizationData) {
-            addVisualizationItem(visualizationData);
-        }
-        
-        const formattedContent = formatStepContent(data, 'result');
-        const resultElement = createStepElement('result', formattedContent, data.timestamp || new Date().toLocaleTimeString());
-        stepContainer.appendChild(resultElement);
-        
-        autoScroll(container);
-    });
-    
-    currentEventSource.addEventListener('error', function(event) {
-        const data = safeJsonParse(event.data);
-        const errorElement = createStepElement('error', formatStepContent(data, 'error'), data.timestamp || new Date().toLocaleTimeString());
-        stepContainer.appendChild(errorElement);
-        
-        autoScroll(container);
-    });
-    
-    currentEventSource.addEventListener('complete', function(event) {
-        const data = safeJsonParse(event.data);
-        const completeElement = createStepElement('success', formatStepContent(data, 'complete'), data.timestamp || new Date().toLocaleTimeString());
-        stepContainer.appendChild(completeElement);
-        
-        autoScroll(container);
-        
-        if (currentEventSource) {
-            currentEventSource.close();
-            currentEventSource = null;
-        }
-        
-        // Refresh the task list to show the updated status
-        loadHistory();
-    });
-    
-    currentEventSource.addEventListener('ping', function() {
-        // Just to keep the connection alive, no UI update needed
-    });
-}
-
-// Extract tables and other visualizations from content
 function extractVisualization(content) {
     if (!content) return null;
     
@@ -1004,60 +1227,59 @@ function initializePanelResize() {
     });
 }
 
-document.addEventListener('DOMContentLoaded', () => {
-    // Check configuration status on startup
-    checkConfigStatus();
-
-    // Load task history
-    loadHistory();
-
-    // Setup language selector
-    const languageSelect = document.getElementById('language-select');
-    if (languageSelect) {
-        languageSelect.addEventListener('change', function() {
-            setLanguage(this.value);
-        });
-    }
-
-    // Setup configuration button event
-    const configButton = document.getElementById('config-button');
-    if (configButton) {
-        configButton.addEventListener('click', function() {
-            fetch('/config/status')
-                .then(response => response.json())
-                .then(data => {
-                    showConfigModal(data.example_config);
-                })
-                .catch(error => {
-                    console.error('Config status check failed:', error);
-                });
-        });
-    }
-
-    // Initialize task history click events
-    const taskList = document.getElementById('task-list');
-    if (taskList) {
-        taskList.addEventListener('click', function(event) {
-            const taskCard = event.target.closest('.task-card');
-            if (taskCard) {
-                const taskId = taskCard.dataset.taskId;
-                if (taskId) {
-                    setupSSE(taskId);
-                    
-                    // Highlight the selected task
-                    document.querySelectorAll('.task-card').forEach(card => {
-                        card.classList.remove('active');
-                    });
-                    taskCard.classList.add('active');
-                }
-            }
-        });
-    }
-
-    // Initialize panel resize functionality
-    initializePanelResize();
-});
-
 function isConfigRequired() {
+    return false;
+}
+
+function isAuthenticated() {
+    const token = localStorage.getItem('auth_token');
+    const expires = localStorage.getItem('token_expires');
+    
+    if (!token || !expires) {
+        return false;
+    }
+    
+    // Check if token is expired
+    const now = Math.floor(Date.now() / 1000);
+    if (now > parseInt(expires)) {
+        // Token expired, clean up
+        localStorage.removeItem('auth_token');
+        localStorage.removeItem('token_expires');
+        localStorage.removeItem('username');
+        return false;
+    }
+    
+    return true;
+}
+
+// Add auth token to all fetch requests
+const originalFetch = window.fetch;
+window.fetch = function(url, options = {}) {
+    // Only add auth header for API endpoints, not for static assets
+    if (typeof url === 'string' && url.startsWith('/') && !url.startsWith('/static/') && !url.includes('/auth/')) {
+        const token = localStorage.getItem('auth_token');
+        
+        if (token) {
+            options.headers = {
+                ...options.headers,
+                'Authorization': `Bearer ${token}`
+            };
+        }
+    }
+    return originalFetch(url, options);
+};
+
+// Function to handle 401 Unauthorized responses
+function handleUnauthorizedResponse(response) {
+    if (response.status === 401) {
+        // Clear stored auth data
+        localStorage.removeItem('auth_token');
+        localStorage.removeItem('token_expires');
+        localStorage.removeItem('username');
+        
+        // Redirect to login page
+        window.location.href = '/login?session_expired=true';
+        return true;
+    }
     return false;
 }
