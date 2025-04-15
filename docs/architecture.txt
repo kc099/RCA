@@ -1,0 +1,429 @@
+# RCA Application Architecture Documentation
+
+## Overview
+
+The RCA (Remote Code Assistant) application follows a client-server architecture with:
+
+1. **Backend**: A FastAPI-based Python server that handles API requests, manages tasks, and integrates with the MCP agent
+2. **Frontend**: A JavaScript client that provides the user interface and interacts with the backend via REST API and Server-Sent Events (SSE)
+
+This document provides a detailed explanation of both the server architecture and the frontend implementation.
+
+## Server Architecture (app.py)
+
+The server is built using FastAPI, a modern Python web framework that provides high performance and built-in API documentation. The application uses asynchronous programming patterns for improved scalability.
+
+### 1. Application Setup
+
+```python
+app = FastAPI(lifespan=lifespan)
+
+app.mount("/static", StaticFiles(directory="static"), name="static")
+templates = Jinja2Templates(directory="templates")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+```
+
+The application setup includes:
+- Static file serving for CSS, JavaScript, and images
+- Jinja2 templating for HTML pages
+- CORS middleware for cross-origin requests
+- Application lifespan management
+
+### 2. Data Models
+
+Key models in the application include:
+
+#### Task Model
+```python
+class Task:
+    id: str
+    prompt: str
+    created_at: datetime
+    status: str
+    steps: list = []
+```
+
+This model represents a task submitted by a user, including:
+- A unique identifier
+- The original prompt
+- Creation timestamp
+- Current status
+- A list of processing steps
+
+### 3. Task Manager
+
+The `TaskManager` class handles task state management, including:
+
+```python
+class TaskManager:
+    def __init__(self):
+        self.tasks = {}  # Store task objects
+        self.queues = {}  # Store asyncio queues for SSE
+
+    def create_task(self, prompt: str):
+        # Creates a new task with a unique ID
+
+    def update_task_step(self, task_id: str, step: int, result: str, step_type: str = "step"):
+        # Updates a task with new step information
+
+    def complete_task(self, task_id: str):
+        # Marks a task as complete
+
+    def fail_task(self, task_id: str, error: str):
+        # Marks a task as failed with an error message
+```
+
+The TaskManager maintains an in-memory store of tasks and provides methods to create, update, and complete tasks. Each task has an associated asyncio queue for real-time updates via SSE.
+
+### 4. API Routes
+
+The application exposes several API endpoints:
+
+#### HTML Routes
+```python
+@app.get("/", response_class=HTMLResponse)
+def index(request: Request):
+    # Renders the main application page
+
+@app.get("/login", response_class=HTMLResponse)
+def login_page(request: Request):
+    # Renders the login page
+
+@app.get("/register", response_class=HTMLResponse)
+def register_page(request: Request):
+    # Renders the registration page
+```
+
+These routes serve HTML pages for the application interface.
+
+#### Task Management Routes
+```python
+@app.post("/tasks")
+def create_task(prompt: str = Body(..., embed=True), current_user: UserInDB = Depends(get_current_active_user)):
+    # Creates a new task and starts processing in a background thread
+
+@app.get("/tasks")
+def get_tasks(current_user: UserInDB = Depends(get_current_active_user)):
+    # Returns a list of all tasks for the current user
+
+@app.get("/tasks/{task_id}")
+def get_task(task_id: str, current_user: UserInDB = Depends(get_current_active_user)):
+    # Returns details for a specific task
+```
+
+These routes handle CRUD operations for tasks, protected by authentication.
+
+#### Server-Sent Events Route
+```python
+@app.get("/tasks/{task_id}/events")
+async def task_events(task_id: str, request: Request, token: Optional[str] = None, current_user: Optional[UserInDB] = None):
+    # Streams real-time task updates to the client
+```
+
+This key route establishes a Server-Sent Events connection for real-time updates, supporting both dependency-based and parameter-based authentication.
+
+#### Configuration Routes
+```python
+@app.get("/config/status")
+def check_config_status(current_user: UserInDB = Depends(get_current_admin_user)):
+    # Checks the status of the application configuration
+
+@app.post("/config/save")
+def save_config(config_data: dict = Body(...), current_user: UserInDB = Depends(get_current_admin_user)):
+    # Saves application configuration
+```
+
+These routes handle application configuration management, restricted to admin users.
+
+#### Authentication Routes
+Authentication routes are mounted from the auth_router:
+
+```python
+app.include_router(
+    auth_router.router,
+    prefix="/auth",
+    tags=["authentication"],
+)
+```
+
+These include login, registration, token validation, and user management endpoints.
+
+### 5. Background Task Processing
+
+Tasks run in background threads to avoid blocking the main server:
+
+```python
+def run_task(task_id: str, prompt: str):
+    # Process the task in a separate thread
+    
+    # Initialize the MCP agent
+    agent = MCPAgent()
+    
+    # Run the agent with the given prompt
+    agent.run(prompt, 20)
+    
+    # Handle task completion or failure
+```
+
+The `run_task` function:
+1. Initializes an MCPAgent
+2. Runs the agent with the user's prompt
+3. Sends updates to the client via the SSE queue
+4. Marks the task as complete or failed
+
+### 6. Error Handling
+
+Global error handling is implemented for graceful failure management:
+
+```python
+@app.exception_handler(Exception)
+async def generic_exception_handler(request: Request, exc: Exception):
+    # Handle any unhandled exceptions
+```
+
+## Frontend Architecture
+
+The frontend is implemented with vanilla JavaScript (no framework) structured across several modules:
+
+### 1. Main Module (main.js)
+
+The main module handles core application functionality:
+
+#### Application Initialization
+```javascript
+document.addEventListener('DOMContentLoaded', () => {
+    // Initialize application only if authenticated
+    if ((window.location.pathname === '/' || window.location.pathname === '') && 
+        typeof isAuthenticated === 'function' && isAuthenticated()) {
+        setupUserMenu();
+        initializeApp();
+    }
+});
+
+function initializeApp() {
+    // Check configuration status
+    // Initialize panel resize functionality
+    // Load task history
+    // Set up event listeners
+}
+```
+
+#### Task Creation
+```javascript
+window.createTask = function() {
+    // Get prompt from input
+    // Create a task via API
+    // Handle response and set up SSE connection
+};
+```
+
+#### Server-Sent Events Handling
+```javascript
+async function setupSSE(taskId) {
+    // Validate token before connecting
+    // Create EventSource connection with authentication
+    // Set up event listeners for real-time updates
+    // Implement reconnection logic
+}
+
+function setupEventListeners(eventSource, stepContainer, container) {
+    // Handle different event types (step, think, tool, result, etc.)
+    // Parse and display updates in the UI
+}
+```
+
+The setupSSE function:
+1. Validates the authentication token
+2. Creates an EventSource connection with the token
+3. Sets up event listeners for different message types
+4. Implements reconnection with backoff
+5. Provides error handling and user feedback
+
+#### UI Utilities
+Various UI utility functions for:
+- Visualization rendering
+- Panel resizing
+- History loading
+- Table creation
+- Markdown formatting
+
+### 2. Authentication Module (auth.js)
+
+Manages user authentication and session handling:
+
+#### Token Management
+```javascript
+// Token validation and refresh
+async function checkAndRefreshToken() {
+    // Check locally stored token
+    // Validate with server
+    // Handle expiration
+}
+
+// Authentication status check
+function isAuthenticated() {
+    // Verify token exists and not expired
+}
+
+// Logout function
+function logout(expired = false) {
+    // Remove token from storage
+    // Redirect to login page
+}
+```
+
+#### Form Handling
+```javascript
+// Login form submission
+loginForm.addEventListener('submit', async (e) => {
+    // Prevent default form submission
+    // Get username and password
+    // Submit to /auth/token endpoint
+    // Store received token
+    // Redirect to main page
+});
+
+// Registration form submission
+registerForm.addEventListener('submit', async (e) => {
+    // Prevent default form submission
+    // Validate passwords match
+    // Submit to /auth/users endpoint
+    // Redirect to login page
+});
+```
+
+#### Network Request Interception
+```javascript
+// Add auth token to all fetch requests
+window.fetch = function(url, options = {}) {
+    // Add authentication header to API requests
+    // Handle unauthorized responses
+    // Redirect to login on authentication failure
+};
+```
+
+This custom fetch function:
+1. Intercepts all network requests
+2. Adds authorization headers to API calls
+3. Handles 401 Unauthorized responses
+4. Triggers logout on authentication failures
+
+## Data Flow
+
+The application data flows through several key interactions:
+
+### 1. Authentication Flow
+
+1. User submits credentials via login form
+2. Frontend sends request to `/auth/token` endpoint
+3. Backend validates credentials and issues JWT token
+4. Frontend stores token in localStorage
+5. Token is attached to all subsequent API requests
+
+### 2. Task Creation Flow
+
+1. User submits prompt in the input field
+2. Frontend sends authenticated request to `/tasks` endpoint
+3. Backend creates a task and starts processing in a background thread
+4. Backend returns task ID to frontend
+5. Frontend establishes SSE connection to `/tasks/{task_id}/events`
+
+### 3. Real-time Update Flow
+
+1. MCPAgent processes the task in the background
+2. Agent publishes updates (steps, tools, results) to the task's queue
+3. SSE endpoint streams updates to the frontend in real-time
+4. Frontend parses updates and renders them in the UI
+5. For visualizations, the frontend extracts and renders tables/charts
+
+### 4. Configuration Flow
+
+1. Admin user accesses configuration interface
+2. Frontend loads current configuration from `/config/status`
+3. User modifies configuration and submits
+4. Backend validates and saves configuration to disk
+5. Application uses updated configuration for subsequent tasks
+
+## Component Interaction Diagram
+
+```
+┌─────────────────────┐     ┌────────────────────┐     ┌────────────────────┐
+│                     │     │                    │     │                    │
+│   Browser          │     │   FastAPI Server   │     │    MCPAgent        │
+│                     │     │                    │     │                    │
+└─────────┬───────────┘     └────────┬───────────┘     └────────┬───────────┘
+          │                          │                          │
+          │  1. Authentication       │                          │
+          ├─────────────────────────►│                          │
+          │                          │                          │
+          │  2. JWT Token            │                          │
+          │◄─────────────────────────┤                          │
+          │                          │                          │
+          │  3. Create Task          │                          │
+          ├─────────────────────────►│                          │
+          │                          │                          │
+          │  4. Task ID              │     5. Process Task      │
+          │◄─────────────────────────┼─────────────────────────►│
+          │                          │                          │
+          │  6. Establish SSE        │                          │
+          ├─────────────────────────►│                          │
+          │                          │                          │
+          │                          │     7. Task Updates      │
+          │                          │◄─────────────────────────┤
+          │  8. Real-time Updates    │                          │
+          │◄─────────────────────────┤                          │
+          │                          │                          │
+          │  9. Task Complete        │                          │
+          │◄─────────────────────────┤                          │
+          │                          │                          │
+```
+
+## Concurrency Model
+
+The application uses a hybrid concurrency model:
+
+1. **Asynchronous API Endpoints**: FastAPI's async capabilities for non-blocking API handlers
+2. **Background Threads**: Task processing in separate threads to avoid blocking the main server
+3. **Asyncio Queues**: SSE communication between background threads and API endpoints
+4. **EventSource**: Real-time client-server communication without polling
+
+## Security Considerations
+
+1. **Authentication**: JWT-based authentication with proper token lifecycle management
+2. **Authorization**: Role-based access control for protected endpoints
+3. **Input Validation**: Request validation with Pydantic models
+4. **CORS Configuration**: Controlled cross-origin resource sharing
+5. **Error Handling**: Secure error responses without sensitive information leakage
+
+## Performance Considerations
+
+1. **Background Processing**: Long-running tasks execute in background threads
+2. **Server-Sent Events**: Efficient one-way communication without polling
+3. **In-memory Caching**: Task results cached in memory for quick retrieval
+4. **Incremental Updates**: Real-time UI updates without full page reloads
+
+## Extensibility Points
+
+The architecture allows for several extension points:
+
+1. **Agent Capabilities**: New tools can be added to the MCPAgent
+2. **Visualization Types**: Additional visualization handlers in the frontend
+3. **Authentication Providers**: Support for additional auth methods (OAuth, etc.)
+4. **Persistent Storage**: Database integration for long-term storage
+
+## Deployment Considerations
+
+For production deployment, consider:
+
+1. **Database Integration**: Replace in-memory storage with a persistent database
+2. **Horizontal Scaling**: Distribute task processing across multiple workers
+3. **Authentication Security**: Move to secure cookie storage and HTTPS-only
+4. **Monitoring**: Add metrics collection for performance monitoring
+5. **Logging**: Implement structured logging for operational visibility

@@ -192,6 +192,7 @@ async function setupSSE(taskId) {
 
     // Clean up existing connection if any
     if (currentEventSource) {
+        mainLog('Closing existing EventSource connection');
         currentEventSource.close();
         currentEventSource = null;
     }
@@ -221,10 +222,12 @@ async function setupSSE(taskId) {
     const stepContainer = ensureStepContainer(container);
     const connectingElement = createStepElement('info', 'Connecting to task...', new Date().toLocaleTimeString());
     stepContainer.appendChild(connectingElement);
+    autoScroll(container);
 
     // Set connection attempt counter
     let connectionAttempts = 0;
     const maxConnectionAttempts = 3;
+    let connectionCheckInterval = null;
     
     function connectEventSource() {
         try {
@@ -250,6 +253,7 @@ async function setupSSE(taskId) {
                         // Show reconnecting message
                         const reconnectElement = createStepElement('warn', `Connection lost. Reconnecting (attempt ${connectionAttempts}/${maxConnectionAttempts})...`, new Date().toLocaleTimeString());
                         stepContainer.appendChild(reconnectElement);
+                        autoScroll(container);
                         
                         // Wait before reconnecting
                         setTimeout(() => {
@@ -266,25 +270,53 @@ async function setupSSE(taskId) {
                     // Max attempts reached, show error
                     const errorElement = createStepElement('error', 'Failed to connect to server after multiple attempts. Please refresh the page and try again.', new Date().toLocaleTimeString());
                     stepContainer.appendChild(errorElement);
+                    autoScroll(container);
                 }
                 
                 // Close connection on error
                 if (currentEventSource && connectionAttempts >= maxConnectionAttempts) {
                     currentEventSource.close();
                     currentEventSource = null;
+                    
+                    // Also clear the interval if it exists
+                    if (connectionCheckInterval) {
+                        clearInterval(connectionCheckInterval);
+                        connectionCheckInterval = null;
+                    }
                 }
             };
             
-            setupEventListeners(currentEventSource, stepContainer, container);
+            // Set up event listeners and store the interval ID
+            connectionCheckInterval = setupEventListeners(currentEventSource, stepContainer, container);
         } catch (error) {
             mainLog('Error creating EventSource:', error);
             const errorElement = createStepElement('error', 'Error connecting to event stream: ' + error.message, new Date().toLocaleTimeString());
             stepContainer.appendChild(errorElement);
+            autoScroll(container);
+            
+            // Clean up interval if there's an error creating the EventSource
+            if (connectionCheckInterval) {
+                clearInterval(connectionCheckInterval);
+                connectionCheckInterval = null;
+            }
         }
     }
     
     // Initial connection
     connectEventSource();
+    
+    // Return a cleanup function (for future use with reactive frameworks)
+    return () => {
+        mainLog('Cleaning up EventSource connection');
+        if (connectionCheckInterval) {
+            clearInterval(connectionCheckInterval);
+            connectionCheckInterval = null;
+        }
+        if (currentEventSource) {
+            currentEventSource.close();
+            currentEventSource = null;
+        }
+    };
 }
 
 // Separate function to set up event listeners to avoid code duplication
@@ -305,6 +337,25 @@ function setupEventListeners(eventSource, stepContainer, container) {
             return { content: 'Error parsing response data', id: ++lastId, timestamp: new Date().toISOString() };
         }
     }
+
+    // Flag to track if we've displayed error messages about connection issues
+    let connectionIssueDisplayed = false;
+    
+    // Periodic connection check
+    let connectionCheckInterval = setInterval(() => {
+        if (eventSource.readyState === EventSource.CLOSED) {
+            mainLog('Connection check: Detected closed EventSource');
+            clearInterval(connectionCheckInterval);
+            
+            // Only show error once if not already handled
+            if (!connectionIssueDisplayed) {
+                connectionIssueDisplayed = true;
+                const disconnectElement = createStepElement('warn', 'Connection closed unexpectedly. The task may have completed or encountered an error.', new Date().toLocaleTimeString());
+                stepContainer.appendChild(disconnectElement);
+                autoScroll(container);
+            }
+        }
+    }, 5000);
 
     // Handle different event types
     eventSource.addEventListener('connected', function(event) {
@@ -390,23 +441,62 @@ function setupEventListeners(eventSource, stepContainer, container) {
     });
     
     eventSource.addEventListener('error', function(event) {
-        mainLog('Received error event', event.data);
-        const data = safeJsonParse(event.data);
-        const errorElement = createStepElement('error', formatStepContent(data, 'error'), data.timestamp || new Date().toLocaleTimeString());
+        // Mark as having displayed a connection issue
+        connectionIssueDisplayed = true;
+        
+        // Clear the connection check interval when we get an explicit error
+        clearInterval(connectionCheckInterval);
+        
+        let errorMessage;
+        if (event.data) {
+            mainLog('Received error event with data', event.data);
+            const data = safeJsonParse(event.data);
+            errorMessage = formatStepContent(data, 'error');
+        } else {
+            // Browser-generated EventSource error (no data)
+            mainLog('Received browser EventSource error (no data)');
+            
+            // Only show error if EventSource is actually closed
+            if (eventSource.readyState === EventSource.CLOSED) {
+                errorMessage = 'Connection closed by server';
+            } else {
+                // Just a temporary network issue, don't show error
+                mainLog('EventSource not closed, might be temporary network issue');
+                return;
+            }
+        }
+        
+        const errorElement = createStepElement('error', errorMessage, new Date().toLocaleTimeString());
         stepContainer.appendChild(errorElement);
         
         autoScroll(container);
+        
+        // Close the EventSource connection on error
+        if (eventSource) {
+            mainLog('Closing EventSource connection due to error');
+            eventSource.close();
+            currentEventSource = null;
+        }
     });
     
     eventSource.addEventListener('complete', function(event) {
         mainLog('Received complete event', event.data);
+        
+        // Clear the connection check interval
+        clearInterval(connectionCheckInterval);
+        
+        // Mark as having displayed a connection message
+        connectionIssueDisplayed = true;
+        
         const data = safeJsonParse(event.data);
         const completeElement = createStepElement('success', formatStepContent(data, 'complete'), data.timestamp || new Date().toLocaleTimeString());
         stepContainer.appendChild(completeElement);
         
         autoScroll(container);
         
+        // Close the EventSource connection
         if (eventSource) {
+            mainLog('Closing EventSource connection after completion');
             eventSource.close();
             currentEventSource = null;
         }
@@ -417,7 +507,32 @@ function setupEventListeners(eventSource, stepContainer, container) {
 
     eventSource.addEventListener('ping', function() {
         // Just to keep the connection alive, no UI update needed
+        mainLog('Received ping event');
     });
+    
+    // Handle browser-level close event
+    eventSource.addEventListener('close', function() {
+        mainLog('EventSource received close event');
+        
+        // Clear the connection check interval
+        clearInterval(connectionCheckInterval);
+        
+        if (!connectionIssueDisplayed) {
+            connectionIssueDisplayed = true;
+            const closedElement = createStepElement('info', 'Connection closed by server', new Date().toLocaleTimeString());
+            stepContainer.appendChild(closedElement);
+            autoScroll(container);
+        }
+        
+        // Ensure connection is fully closed
+        if (eventSource) {
+            eventSource.close();
+            currentEventSource = null;
+        }
+    });
+    
+    // Return the interval ID for cleanup
+    return connectionCheckInterval;
 }
 
 function checkConfigStatus() {
@@ -791,7 +906,18 @@ function setupDraggableItem(element, itemId) {
     const resizeHandle = element.querySelector('.resize-handle');
     const workspace = document.getElementById('output-workspace');
     
-    // Drag functionality
+    // Initialize resize handle position
+    resizeHandle.style.left = `${element.offsetWidth}px`;
+    
+    // When user presses mouse button on the resize handle
+    resizeHandle.addEventListener('mousedown', function(e) {
+        isResizing = true;
+        element.classList.add('resizing');
+        e.stopPropagation();
+        e.preventDefault();
+    });
+    
+    // When user presses mouse button on the header
     header.addEventListener('mousedown', function(e) {
         isDragging = true;
         element.classList.add('dragging');
@@ -804,14 +930,6 @@ function setupDraggableItem(element, itemId) {
             y: e.clientY - (rect.top - workspaceRect.top)
         };
         
-        e.preventDefault();
-    });
-    
-    // Resize functionality
-    resizeHandle.addEventListener('mousedown', function(e) {
-        isResizing = true;
-        element.classList.add('resizing');
-        e.stopPropagation();
         e.preventDefault();
     });
     

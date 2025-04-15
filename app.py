@@ -9,25 +9,38 @@ from datetime import datetime
 from functools import partial
 from json import dumps
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Dict, List, Any
 
-from fastapi import Body, FastAPI, HTTPException, Request, Depends
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import (
-    FileResponse,
-    HTMLResponse,
-    JSONResponse,
-    StreamingResponse,
+from fastapi import (
+    FastAPI,
+    Request,
+    Depends,
+    HTTPException,
+    status,
+    Body,
+    Response,
+    Cookie,
 )
+from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-
+from datetime import datetime
+import pytz
+import json
+import logging
+import asyncio
+import uuid
+import webbrowser
+import pkg_resources
 import sys
-from app.agent.mcp import MCPAgent
-from app.auth.jwt import get_current_active_user, get_current_admin_user, jwt, ALGORITHM, SECRET_KEY, get_user_by_username, get_user_from_token
+
+# Import MySQL-based authentication
 from app.auth.models import UserInDB
-from app.auth.repository import create_initial_admin
+from app.auth.jwt import get_current_active_user, get_current_admin_user, get_user_from_token
+from app.auth.mysql_repository import setup_db, create_initial_admin
+from app.agent.mcp import MCPAgent
 from app.auth import router as auth_router
 
 
@@ -35,6 +48,7 @@ from app.auth import router as auth_router
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Create the initial admin user if no users exist
+    await setup_db()
     await create_initial_admin()
     yield
 
@@ -138,7 +152,7 @@ async def download_file(
     if not os.path.exists(file_path):
         raise HTTPException(status_code=404, detail="File not found")
 
-    return FileResponse(file_path, filename=os.path.basename(file_path))
+    return Response(content=open(file_path, "rb").read(), media_type="application/octet-stream", headers={"Content-Disposition": f"attachment; filename={os.path.basename(file_path)}"})
 
 
 @app.post("/tasks")
@@ -266,42 +280,89 @@ async def task_events(
         queue = task_manager.queues[task_id]
         
         task = task_manager.tasks.get(task_id)
+        task_status = "running"
         if task:
-            yield f"event: status\ndata: {dumps({'type': 'status', 'status': task.status, 'steps': task.steps})}\n\n"
+            task_status = task.status
+            yield f"event: status\ndata: {dumps({'type': 'status', 'status': task_status, 'steps': task.steps})}\n\n"
+        
+        # If task is already complete or failed, send a final event and stop
+        if task_status in ["complete", "failed"]:
+            status_type = "complete" if task_status == "complete" else "error"
+            yield f"event: {status_type}\ndata: {dumps({'message': f'Task already {task_status}', 'id': task_id})}\n\n"
+            print(f"[SSE] Task {task_id} already in {task_status} state, ending stream")
+            return
         
         # Send an initial connection success message
         yield f"event: connected\ndata: {dumps({'message': 'Connected to event stream'})}\n\n"
         
-        while True:
-            try:
-                event = await queue.get()
-                formatted_event = dumps(event)
+        # Create a clean closure flag
+        clean_closure = False
+        
+        try:
+            while True:
+                try:
+                    # Use a timeout to allow for clean cancellation
+                    event = await asyncio.wait_for(queue.get(), timeout=30.0)
+                    formatted_event = dumps(event)
+                    
+                    yield ": heartbeat\n\n"
+                    
+                    if event["type"] == "complete":
+                        print(f"[SSE] Task {task_id} completed, sending complete event and ending stream")
+                        yield f"event: complete\ndata: {formatted_event}\n\n"
+                        clean_closure = True
+                        break
+                    elif event["type"] == "error":
+                        print(f"[SSE] Task {task_id} failed, sending error event and ending stream")
+                        yield f"event: error\ndata: {formatted_event}\n\n"
+                        clean_closure = True
+                        break
+                    elif event["type"] == "step":
+                        task = task_manager.tasks.get(task_id)
+                        if task:
+                            yield f"event: status\ndata: {dumps({'type': 'status', 'status': task.status, 'steps': task.steps})}\n\n"
+                        yield f"event: {event['type']}\ndata: {formatted_event}\n\n"
+                    elif event["type"] in ["think", "tool", "act", "run"]:
+                        yield f"event: {event['type']}\ndata: {formatted_event}\n\n"
+                    else:
+                        yield f"event: {event['type']}\ndata: {formatted_event}\n\n"
                 
-                yield ": heartbeat\n\n"
-                
-                if event["type"] == "complete":
-                    yield f"event: complete\ndata: {formatted_event}\n\n"
-                    break
-                elif event["type"] == "error":
-                    yield f"event: error\ndata: {formatted_event}\n\n"
-                    break
-                elif event["type"] == "step":
+                except asyncio.TimeoutError:
+                    # Send heartbeat to keep connection alive
+                    yield ": heartbeat\n\n"
+                    
+                    # Check if task is still in the queue system
+                    if task_id not in task_manager.queues:
+                        print(f"[SSE] Task {task_id} queue no longer exists, ending stream")
+                        yield f"event: complete\ndata: {dumps({'message': 'Task processing completed', 'id': task_id})}\n\n"
+                        clean_closure = True
+                        break
+                        
+                    # Check if task is marked as complete but we missed the event
                     task = task_manager.tasks.get(task_id)
-                    if task:
-                        yield f"event: status\ndata: {dumps({'type': 'status', 'status': task.status, 'steps': task.steps})}\n\n"
-                    yield f"event: {event['type']}\ndata: {formatted_event}\n\n"
-                elif event["type"] in ["think", "tool", "act", "run"]:
-                    yield f"event: {event['type']}\ndata: {formatted_event}\n\n"
-                else:
-                    yield f"event: {event['type']}\ndata: {formatted_event}\n\n"
+                    if task and task.status in ["complete", "failed"]:
+                        status_type = "complete" if task.status == "complete" else "error"
+                        print(f"[SSE] Task {task_id} is {task.status} but no event was sent, ending stream")
+                        yield f"event: {status_type}\ndata: {dumps({'message': f'Task {task.status}', 'id': task_id})}\n\n"
+                        clean_closure = True
+                        break
                 
-            except asyncio.CancelledError:
-                print(f"Client disconnected for task {task_id}")
-                break
-            except Exception as e:
-                print(f"Error in event stream: {str(e)}")
-                yield f"event: error\ndata: {dumps({'message': str(e)})}\n\n"
-                break
+                except asyncio.CancelledError:
+                    print(f"[SSE] Stream cancelled for task {task_id}")
+                    yield f"event: error\ndata: {dumps({'message': 'Stream cancelled'})}\n\n"
+                    break
+                
+                except Exception as e:
+                    print(f"[SSE] Error in event stream for task {task_id}: {str(e)}")
+                    yield f"event: error\ndata: {dumps({'message': str(e)})}\n\n"
+                    break
+        
+        finally:
+            # Clean up on exit
+            if not clean_closure:
+                print(f"[SSE] Stream ended for task {task_id} without clean closure")
+                # Only yield final message if we didn't have a clean closure
+                yield f"event: error\ndata: {dumps({'message': 'Stream ended unexpectedly'})}\n\n"
     
     return StreamingResponse(
         event_generator(),
