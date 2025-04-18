@@ -13,6 +13,11 @@ from datetime import datetime
 # Add the parent directory to sys.path to import app modules
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+# Make sure environment variables are loaded before importing modules
+from app.utils.env import load_dotenv
+env_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), '.env')
+load_dotenv(env_path)
+
 from app.auth.models import UserCreate, UserUpdate
 from app.auth.mysql_repository import (
     setup_db,
