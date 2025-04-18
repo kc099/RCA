@@ -17,7 +17,7 @@ from app.tool.base import BaseTool
 from app.resource.base import BaseResource
 from app.tool.bash import Bash
 from app.tool.browser_use_tool import BrowserUseTool
-from app.tool.excel_tool import ExcelTool
+from app.tool.ask_human import AskHuman
 from app.tool.mysql_rw import MySQLRWTool
 from app.tool.str_replace_editor import StrReplaceEditor
 from app.tool.python_execute import PythonExecute
@@ -41,13 +41,14 @@ class MCPServer:
         # Initialize standard tools
         self.tools["bash"] = Bash()
         self.tools["browser"] = BrowserUseTool()
+        self.tools["ask_human"] = AskHuman()
         self.tools["editor"] = StrReplaceEditor()
         self.tools["mysql_rw"] = MySQLRWTool()
         self.tools["terminate"] = Terminate()
         self.tools["file_saver"] = FileSaver()
 
         # Initialize resources
-        self.resources["postgres_data"] = PostgreSQLResource()
+        #self.resources["postgres_data"] = PostgreSQLResource()
 
     def register_tool(self, tool: BaseTool, method_name: Optional[str] = None) -> None:
         """Register a tool with parameter validation and documentation."""
@@ -224,9 +225,9 @@ class MCPServer:
         terminate_tool = Terminate()
         string_tool = StrReplaceEditor()
         file_saver_tool = FileSaver()
+        ask_human_tool = AskHuman()
 
-        # Initialize Excel tool
-        excel_tool = ExcelTool()
+
 
         # Register tools with the agent
         self.register_tool(browser_use_tool)
@@ -235,7 +236,7 @@ class MCPServer:
         self.register_tool(terminate_tool)
         self.register_tool(string_tool)
         self.register_tool(file_saver_tool)
-        #self.register_tool(excel_tool)
+        self.register_tool(ask_human_tool)
 
         # Initialize MySQL read/write tool with remote connection parameters
         await mysql_rw_tool.initialize(
@@ -253,20 +254,20 @@ class MCPServer:
     async def register_all_resources(self) -> None:
         """Register all resources with the server."""
         # Initialize resources
-        postgres_resource = PostgreSQLResource()
+        # postgres_resource = PostgreSQLResource()
 
-        # Register resources with the agent
-        self.register_resource(postgres_resource)
+        # # Register resources with the agent
+        # self.register_resource(postgres_resource)
 
-        # Initialize PostgreSQL resource
-        await postgres_resource.initialize(
-            host="127.0.0.1",
-            port=5432,  # Default PostgreSQL port, adjust if needed
-            user="postgres",  # Default PostgreSQL user, adjust if needed
-            password="12345",  # Password for PostgreSQL
-            database="postgres",  # Default database name, adjust if needed
-            max_rows=100
-        )
+        # # Initialize PostgreSQL resource
+        # await postgres_resource.initialize(
+        #     host="127.0.0.1",
+        #     port=5432,  # Default PostgreSQL port, adjust if needed
+        #     user="postgres",  # Default PostgreSQL user, adjust if needed
+        #     password="12345",  # Password for PostgreSQL
+        #     database="postgres",  # Default database name, adjust if needed
+        #     max_rows=100
+        # )
 
     async def cleanup_resources(self) -> None:
         """Clean up resources when the server is shutting down."""
