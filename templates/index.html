@@ -38,10 +38,7 @@
                 <div class="chat-header">
                     <h2>Chat</h2>
                 </div>
-                <div class="history-panel">
-                    <h3>History Tasks</h3>
-                    <div id="task-list" class="task-list"></div>
-                </div>
+                <!-- Removed the History Tasks panel as requested -->
                 <div id="task-container" class="task-container">
                     <div class="welcome-message">
                         <h2></h2>
@@ -141,9 +138,9 @@
     </div>
 
     <!-- Load scripts -->
-    <script src="/static/auth.js"></script>
-    <script src="/static/main.js"></script>
-    <script src="/static/i18n.js"></script>
+    <script src="/static/auth.js?v={{ cache_version }}"></script>
+    <script src="/static/main.js?v={{ cache_version }}"></script>
+    <script src="/static/i18n.js?v={{ cache_version }}"></script>
 </body>
 
 </html>

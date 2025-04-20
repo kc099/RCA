@@ -1,14 +1,32 @@
 import logging
+import asyncio
 import sys
+import inspect
+import uuid
+from typing import Dict, Any, Callable, Coroutine
 
-logging.basicConfig(level=logging.INFO, handlers=[logging.StreamHandler(sys.stderr)])
+# Configure logging - minimal and clean
+logging.basicConfig(
+    level=logging.WARNING,
+    format='%(levelname)s: %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+import argparse
+import atexit
+import json
+from inspect import Parameter, Signature
+from typing import Optional
+
+from fastapi import Request
+from fastapi.responses import StreamingResponse
 
 import argparse
 import asyncio
 import atexit
 import json
 from inspect import Parameter, Signature
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 from mcp.server.fastmcp import FastMCP
 
@@ -29,6 +47,42 @@ from app.tool.file_saver import FileSaver
 # Patch database connections to handle event loop closed errors
 patch_aiomysql_connection()
 patch_asyncpg_connection()
+
+# Import task_manager for the task_events function
+import importlib.util
+import sys
+
+# Create logger
+logger = logging.getLogger(__name__)
+
+# Workaround to import task_manager from app.py without circular imports
+def get_task_manager():
+    try:
+        # First try the direct import approach
+        from app import task_manager
+        return task_manager
+    except (ImportError, AttributeError):
+        # If that fails, use a more robust approach
+        logger.info("Using dynamic import for task_manager")
+        try:
+            import sys
+            import os
+            # Get the project root directory
+            root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
+            sys.path.insert(0, root_dir)
+            # Dynamically import from app.py
+            from app import task_manager
+            return task_manager
+        except Exception as e:
+            logger.error(f"Failed to import task_manager: {e}")
+            # Return a placeholder that will raise appropriate errors when used
+            class MissingTaskManager:
+                def __getattr__(self, name):
+                    raise RuntimeError("task_manager could not be imported")
+            return MissingTaskManager()
+
+# Get the task_manager instance
+task_manager = get_task_manager()
 
 class MCPServer:
     """MCP Server implementation with tool and resource registration and management."""
@@ -62,6 +116,14 @@ class MCPServer:
             result = await tool.execute(**kwargs)
 
             logger.info(f"Result of {tool_name}: {result}")
+
+            # Format the result for better UI rendering, especially for MySQL outputs
+            if tool_name == "mysql_rw" and isinstance(result, dict) and "output" in result:
+                # Generate a unique ID for this tool result to avoid duplication in UI
+                result["id"] = str(uuid.uuid4())
+                # Ensure proper formatting for visualization
+                if isinstance(result["output"], str) and ("+-" in result["output"] and "-+" in result["output"]):
+                    result["visualization_type"] = "table"
 
             # Handle different types of results (match original logic)
             if hasattr(result, "model_dump"):

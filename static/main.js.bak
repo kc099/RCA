@@ -1,13 +1,7 @@
 // Add a debug log helper - enhanced version
 function mainLog(message, data = null) {
-    // Only log if debug mode is enabled
-    if (window.DEBUG_MODE === true) {
-        if (data) {
-            console.log(`[RCA]`, message, data);
-        } else {
-            console.log(`[RCA]`, message);
-        }
-    }
+    const timestamp = new Date().toISOString();
+    console.log(`[Main ${timestamp}] ${message}`, data || '');
 }
 
 // Global variables for event handling
@@ -422,24 +416,6 @@ function extractToolVisualization(content) {
     }
     
     return null;
-}
-
-// Format the content based on event type
-function formatStepContent(data, eventType) {
-    // Special case for certain formats
-    if (typeof data === 'object' && data.content) {
-        return data.content;
-    }
-    
-    if (typeof data === 'object' && data.result) {
-        return data.result;
-    }
-    
-    if (typeof data === 'string') {
-        return data;
-    }
-    
-    return JSON.stringify(data);
 }
 
 // Separate function to set up event listeners to avoid code duplication
@@ -1333,175 +1309,51 @@ function addVisualizationItem(data, sourceId = null) {
     const emptyMsg = workspace.querySelector('.empty-output');
     if (emptyMsg) emptyMsg.style.display = 'none';
     
-    // Check if this visualization already exists
-    const existingItem = workspace.querySelector(`[data-source="${data.id || sourceId}"]`);
-    if (existingItem) {
-        // If it already exists, don't add it again
-        existingItem.classList.add('highlight');
-        setTimeout(() => existingItem.classList.remove('highlight'), 2000);
-        return;
-    }
-    
-    // Create wrapper for the visualization (holds resize handles)
-    const wrapper = document.createElement('div');
-    wrapper.className = 'visualization-wrapper';
-    wrapper.dataset.source = data.id || sourceId || `vis-${Date.now()}`;
-    
-    // Add resize handles to the wrapper
-    const resizeHandles = ['n', 'e', 's', 'w', 'ne', 'se', 'sw', 'nw'];
-    resizeHandles.forEach(direction => {
-        const handle = document.createElement('div');
-        handle.className = `resize-handle resize-${direction}`;
-        wrapper.appendChild(handle);
-    });
-    
-    // Create the scrollable content container
+    // Create a new visualization item container
     const item = document.createElement('div');
     item.className = 'visualization-item';
+    item.dataset.source = data.id || sourceId || `vis-${Date.now()}`;
     
     // Add the appropriate header
     const header = document.createElement('div');
     header.className = 'visualization-header';
-    header.innerHTML = `<h3>${data.title || 'Query Result'}</h3>`;
+    header.innerHTML = `<h3>${data.title || 'Output'}</h3>`;
     item.appendChild(header);
     
     // Create content based on visualization type
     const content = document.createElement('div');
     content.className = 'visualization-content';
     
-    if (data.type === 'table' && data.content && data.content.headers) {
+    if (data.type === 'table' && data.content) {
         // Create table element
         const table = document.createElement('table');
         table.className = 'data-table';
-        table.style.width = "100%";
-        table.style.tableLayout = "fixed";
         
         // Add table headers
         const thead = document.createElement('thead');
         const headerRow = document.createElement('tr');
-        
         data.content.headers.forEach(header => {
             const th = document.createElement('th');
             th.textContent = header;
-            th.className = 'resizable';
-            th.style.position = 'relative';
-            th.style.overflow = 'hidden';
-            th.style.textOverflow = 'ellipsis';
-            th.style.whiteSpace = 'nowrap';
-            th.style.minWidth = '80px';
-            
-            // Add the resize handle directly
-            const resizer = document.createElement('div');
-            resizer.className = 'column-resizer';
-            resizer.style.position = 'absolute';
-            resizer.style.top = '0';
-            resizer.style.right = '0';
-            resizer.style.width = '8px';
-            resizer.style.height = '100%';
-            resizer.style.cursor = 'col-resize';
-            resizer.style.userSelect = 'none';
-            resizer.style.backgroundColor = '#0077cc';
-            resizer.style.opacity = '0.3';
-            
-            // Add hover effect
-            resizer.addEventListener('mouseover', () => {
-                resizer.style.opacity = '0.8';
-                resizer.style.width = '10px';
-            });
-            
-            resizer.addEventListener('mouseout', () => {
-                resizer.style.opacity = '0.3';
-                resizer.style.width = '8px';
-            });
-            
-            // Add resize functionality
-            resizer.addEventListener('mousedown', function(e) {
-                e.preventDefault();
-                e.stopPropagation();
-                
-                const startX = e.pageX;
-                const startWidth = th.offsetWidth;
-                
-                const mouseMoveHandler = function(e) {
-                    // Calculate new width
-                    const newWidth = Math.max(80, startWidth + e.pageX - startX);
-                    th.style.width = newWidth + 'px';
-                };
-                
-                const mouseUpHandler = function() {
-                    document.removeEventListener('mousemove', mouseMoveHandler);
-                    document.removeEventListener('mouseup', mouseUpHandler);
-                };
-                
-                document.addEventListener('mousemove', mouseMoveHandler);
-                document.addEventListener('mouseup', mouseUpHandler);
-            });
-            
-            th.appendChild(resizer);
             headerRow.appendChild(th);
         });
-        
         thead.appendChild(headerRow);
         table.appendChild(thead);
         
         // Add table rows
         const tbody = document.createElement('tbody');
-        
         data.content.rows.forEach(row => {
             const tr = document.createElement('tr');
-            
-            // Handle both array format and object format
-            if (Array.isArray(row)) {
-                // Array format
-                row.forEach(cell => {
-                    const td = document.createElement('td');
-                    td.textContent = cell;
-                    tr.appendChild(td);
-                });
-            } else {
-                // Object format (using headers as keys)
-                data.content.headers.forEach(header => {
-                    const td = document.createElement('td');
-                    td.textContent = row[header] || '';
-                    tr.appendChild(td);
-                });
-            }
-            
+            row.forEach(cell => {
+                const td = document.createElement('td');
+                td.textContent = cell;
+                tr.appendChild(td);
+            });
             tbody.appendChild(tr);
         });
-        
         table.appendChild(tbody);
-        content.appendChild(table);
         
-        // Make the table headers resizable with a minimum width
-        setTimeout(() => {
-            const tableHeaders = table.querySelectorAll('th');
-            tableHeaders.forEach(th => {
-                th.style.position = 'relative';
-                const grip = document.createElement('div');
-                grip.innerHTML = "&nbsp;";
-                grip.style.position = 'absolute';
-                grip.style.top = '0';
-                grip.style.right = '0';
-                grip.style.bottom = '0';
-                grip.style.width = '5px';
-                grip.style.cursor = 'col-resize';
-                grip.addEventListener('mousedown', function(e) {
-                    const startX = e.pageX;
-                    const startWidth = th.offsetWidth;
-                    const moveHandler = function(e) {
-                        th.style.width = Math.max(50, startWidth + e.pageX - startX) + 'px';
-                    };
-                    const upHandler = function() {
-                        document.removeEventListener('mousemove', moveHandler);
-                        document.removeEventListener('mouseup', upHandler);
-                    };
-                    document.addEventListener('mousemove', moveHandler);
-                    document.addEventListener('mouseup', upHandler);
-                });
-                th.appendChild(grip);
-            });
-        }, 100);
+        content.appendChild(table);
     } else {
         // Default to pre-formatted text for unknown types
         content.innerHTML = `<pre>${JSON.stringify(data.content || data, null, 2)}</pre>`;
@@ -1510,114 +1362,37 @@ function addVisualizationItem(data, sourceId = null) {
     item.appendChild(content);
     
     // Add to the visualization panel
-    wrapper.appendChild(item);
-    workspace.appendChild(wrapper);
+    workspace.appendChild(item);
     
-    // Make the wrapper draggable within the workspace
-    wrapper.style.cursor = 'move';
-    wrapper.style.position = 'relative';
-    wrapper.style.zIndex = '1';
-    
-    // Add drag functionality to the wrapper
-    wrapper.addEventListener('mousedown', function(e) {
-        // Skip if clicking on resize handles or table column resizers
-        if (e.target.classList.contains('resize-handle') || 
-            e.target.classList.contains('column-resizer') || 
-            e.target.tagName === 'TH' || 
-            e.target.closest('th')) return;
-        
-        const startX = e.clientX;
-        const startY = e.clientY;
-        const startLeft = parseInt(wrapper.style.left || '0');
-        const startTop = parseInt(wrapper.style.top || '0');
-        
-        const moveHandler = function(e) {
-            wrapper.style.left = startLeft + e.clientX - startX + 'px';
-            wrapper.style.top = startTop + e.clientY - startY + 'px';
-        };
-        
-        const upHandler = function() {
-            document.removeEventListener('mousemove', moveHandler);
-            document.removeEventListener('mouseup', upHandler);
-        };
-        
-        document.addEventListener('mousemove', moveHandler);
-        document.addEventListener('mouseup', upHandler);
-        
-        e.preventDefault(); // Prevent text selection during drag
+    // Add to the output items array for tracking
+    outputItems.push({
+        id: data.id || sourceId,
+        element: item,
+        data: data
     });
     
-    // Add resize functionality to the wrapper
-    const resizeHandleElements = wrapper.querySelectorAll('.resize-handle');
-    resizeHandleElements.forEach(handle => {
-        handle.addEventListener('mousedown', function(e) {
-            e.stopPropagation();
-            
-            const startX = e.clientX;
-            const startY = e.clientY;
-            const startWidth = wrapper.offsetWidth;
-            const startHeight = wrapper.offsetHeight;
-            const startLeft = parseInt(wrapper.style.left || '0');
-            const startTop = parseInt(wrapper.style.top || '0');
-            const direction = handle.className.split(' ')[1].split('-')[1];
-            
-            const minWidth = 200;
-            const minHeight = 100;
-            
-            const moveHandler = function(e) {
-                let newWidth = startWidth;
-                let newHeight = startHeight;
-                let newLeft = startLeft;
-                let newTop = startTop;
-                
-                // Handle different directions
-                if (direction.includes('e')) {
-                    newWidth = Math.max(minWidth, startWidth + e.clientX - startX);
-                }
-                if (direction.includes('s')) {
-                    newHeight = Math.max(minHeight, startHeight + e.clientY - startY);
-                }
-                if (direction.includes('w')) {
-                    newWidth = Math.max(minWidth, startWidth - (e.clientX - startX));
-                    newLeft = startLeft + startWidth - newWidth;
-                }
-                if (direction.includes('n')) {
-                    newHeight = Math.max(minHeight, startHeight - (e.clientY - startY));
-                    newTop = startTop + startHeight - newHeight;
-                }
-                
-                wrapper.style.width = newWidth + 'px';
-                wrapper.style.height = newHeight + 'px';
-                wrapper.style.left = newLeft + 'px';
-                wrapper.style.top = newTop + 'px';
-            };
-            
-            const upHandler = function() {
-                document.removeEventListener('mousemove', moveHandler);
-                document.removeEventListener('mouseup', upHandler);
-            };
-            
-            document.addEventListener('mousemove', moveHandler);
-            document.addEventListener('mouseup', upHandler);
-            
-            e.preventDefault();
-        });
-    });
-    
-    // Highlight the wrapper briefly to draw attention
-    wrapper.classList.add('highlight');
-    setTimeout(() => wrapper.classList.remove('highlight'), 2000);
+    return item;
 }
 
-function ensureStepContainer(container) {
-    let stepContainer = container.querySelector('.step-container');
-    if (!stepContainer) {
-        container.innerHTML = '<div class="step-container"></div>';
-        stepContainer = container.querySelector('.step-container');
+// Helper function to safely parse MySQL/table output from tool results
+function extractToolVisualization(content) {
+    if (!content) return null;
+    
+    try {
+        // Try to extract visualization data from tool outputs
+        const visualizationData = extractToolVisualization(content);
+        if (visualizationData) {
+            addVisualizationItem(visualizationData);
+            mainLog('Added visualization from tool output', visualizationData);
+        }
+    } catch (e) {
+        mainLog('Error processing tool output for visualization:', e);
     }
-    return stepContainer;
+    
+    return null;
 }
 
+// Create a new step element with formatting
 function createStepElement(type, content, timestamp) {
     // Skip empty content
     if (!content) return null;
@@ -1949,335 +1724,75 @@ function handleUnauthorizedResponse(response) {
     return false;
 }
 
-// Helper function to convert MySQL/table output from tool results
+// Helper function to convert MySQL ASCII table output to markdown format
 function convertMySQLOutputToMarkdown(mysqlOutput) {
     if (!mysqlOutput) return null;
     
     mainLog('Converting MySQL output to markdown', mysqlOutput);
     
     // Split the output into lines
-    let lines = mysqlOutput.split('\n');
+    const lines = mysqlOutput.split('\n').filter(line => line.trim());
+    if (lines.length < 3) return null; // Need at least header, separator, and one data row
     
-    // Filter out empty lines and keep only rows with data or separator lines
-    lines = lines.filter(line => line.trim().length > 0);
-    
-    if (lines.length < 3) {
-        mainLog('Not enough lines for a valid table');
-        return null; // Not enough lines for a valid table
-    }
-    
-    // Initialize markdown table lines
-    const markdownLines = [];
-    
-    // Process header line (second line, after the top border)
-    const headerLine = lines.find(line => line.includes('|') && !line.includes('+-'));
-    if (!headerLine) {
-        mainLog('No header line found in MySQL output');
-        return null;
-    }
-    
-    // Extract headers from the header line
-    const headers = headerLine.split('|')
-        .map(h => h.trim())
-        .filter(h => h.length > 0);
-    
-    if (headers.length === 0) {
-        mainLog('No valid headers found');
-        return null;
-    }
-    
-    // Add headers to markdown
-    markdownLines.push(`| ${headers.join(' | ')} |`);
-    
-    // Add separator line
-    markdownLines.push(`| ${headers.map(() => '---').join(' | ')} |`);
-    
-    // Process data rows (all lines that have | but are not headers or separator lines)
-    const dataLines = lines.filter(line => 
-        line.includes('|') && 
-        !line.includes('+-') && 
-        line !== headerLine
-    );
-    
-    // Add data rows to markdown
-    dataLines.forEach(line => {
-        const cells = line.split('|')
-            .map(c => c.trim())
-            .filter(c => c.length > 0);
-        
-        if (cells.length > 0) {
-            markdownLines.push(`| ${cells.join(' | ')} |`);
+    // Find the header line (it's between the first and second separator lines)
+    let headerLineIndex = -1;
+    for (let i = 0; i < lines.length; i++) {
+        if (lines[i].includes('+-') && lines[i].includes('-+')) {
+            headerLineIndex = i + 1;
+            break;
         }
-    });
+    }
     
-    // Make sure we have at least one data row
-    if (markdownLines.length < 3) {
-        mainLog('No data rows found');
+    if (headerLineIndex === -1 || headerLineIndex >= lines.length) {
+        mainLog('Could not find header line in MySQL output');
         return null;
     }
     
-    return markdownLines.join('\n');
-}
-
-// Parse markdown table into structured data
-function parseMarkdownTable(markdownTable) {
-    if (!markdownTable) return null;
+    const headerLine = lines[headerLineIndex];
     
-    try {
-        const lines = markdownTable.trim().split('\n');
-        if (lines.length < 3) return null; // Need at least header, separator, and one data row
+    // Replace MySQL table formatting with markdown formatting
+    let headerCells = headerLine.split('|')
+        .map(cell => cell.trim())
+        .filter(cell => cell); // Remove empty cells
+    
+    if (headerCells.length === 0) {
+        mainLog('No header cells found in MySQL output');
+        return null;
+    }
+    
+    // Create the markdown table header
+    let markdownTable = '| ' + headerCells.join(' | ') + ' |\n';
+    
+    // Add the separator line
+    markdownTable += '| ' + headerCells.map(() => '---').join(' | ') + ' |\n';
+    
+    // Add data rows (skip separator lines and the header)
+    let inDataSection = false;
+    for (let i = headerLineIndex + 1; i < lines.length; i++) {
+        // Skip separator lines
+        if (lines[i].includes('+-') && lines[i].includes('-+')) {
+            if (!inDataSection) {
+                inDataSection = true; // Start of data section
+            }
+            continue;
+        }
         
-        // Parse headers (first row)
-        const headerLine = lines[0];
-        const headers = headerLine.split('|')
-            .map(h => h.trim())
-            .filter(h => h.length > 0);
-        
-        if (headers.length === 0) return null;
-        
-        // Skip the separator line (line[1])
-        
-        // Parse data rows
-        const rows = [];
-        for (let i = 2; i < lines.length; i++) {
-            const line = lines[i].trim();
-            if (!line || !line.includes('|')) continue;
-            
-            const cells = line.split('|')
+        if (inDataSection) {
+            const rowCells = lines[i].split('|')
                 .map(c => c.trim())
-                .filter(c => c.length > 0);
+                .filter((c, idx) => idx > 0 && idx <= headerCells.length);
             
-            if (cells.length > 0) {
-                rows.push(cells);
+            if (rowCells.length > 0) {
+                markdownTable += '| ' + rowCells.join(' | ') + ' |\n';
             }
         }
-        
-        return { headers, rows };
-    } catch (error) {
-        mainLog('Error parsing markdown table:', error);
-        return null;
-    }
-}
-
-function extractToolVisualization(content) {
-    if (!content) return null;
-    
-    try {
-        mainLog('Attempting to extract visualization from:', content);
-        
-        // Try different extraction methods
-        
-        // Method 1: Direct JSON pattern in tool output
-        const jsonMatch = content.match(/Observed output of cmd.*?executed:\s*(\{.*?\})/s);
-        if (jsonMatch) {
-            const jsonStr = jsonMatch[1];
-            mainLog('Found JSON in tool output:', jsonStr);
-            try {
-                const toolData = JSON.parse(jsonStr);
-                
-                // Check if this has visualization data
-                if (toolData.output) {
-                    // For MySQL tables or other tabular data
-                    if (toolData.visualization_type === 'table' || 
-                       (toolData.output.includes('+-') && toolData.output.includes('-+') && toolData.output.includes('|'))) {
-                        
-                        mainLog('Detected MySQL table format in output');
-                        const markdownTable = convertMySQLOutputToMarkdown(toolData.output);
-                        if (markdownTable) {
-                            const parsedTable = parseMarkdownTable(markdownTable);
-                            if (parsedTable && parsedTable.headers && parsedTable.rows.length > 0) {
-                                mainLog('Successfully parsed table data', parsedTable);
-                                return {
-                                    type: 'table',
-                                    title: 'Query Result',
-                                    content: parsedTable,
-                                    id: toolData.id || null,
-                                    originalMarkdown: markdownTable,
-                                    toolOutput: toolData.output
-                                };
-                            }
-                        }
-                    }
-                }
-            } catch (e) {
-                mainLog('Error parsing JSON from tool output:', e);
-            }
-        }
-        
-        // Method 2: Look for MySQL output format directly
-        if (content.includes('+---') && content.includes('|')) {
-            const tableLines = content.split('\n').filter(line => 
-                line.includes('|') || line.includes('+---'));
-            
-            if (tableLines.length > 2) {
-                const tableText = tableLines.join('\n');
-                mainLog('Found MySQL table format directly:', tableText);
-                
-                const markdownTable = convertMySQLOutputToMarkdown(tableText);
-                if (markdownTable) {
-                    const parsedTable = parseMarkdownTable(markdownTable);
-                    if (parsedTable && parsedTable.headers && parsedTable.rows.length > 0) {
-                        return {
-                            type: 'table',
-                            title: 'Query Result',
-                            content: parsedTable,
-                            id: `direct-table-${Date.now()}`,
-                            originalMarkdown: markdownTable,
-                            toolOutput: tableText
-                        };
-                    }
-                }
-            }
-        }
-        
-        // Method 3: Look for Step content with mysql_rw execution
-        const stepMatch = content.match(/Step \d+: Observed output of cmd `mysql_rw` executed:\s*(\{.*?\})/s);
-        if (stepMatch) {
-            const jsonStr = stepMatch[1];
-            mainLog('Found mysql_rw output in step content:', jsonStr);
-            
-            try {
-                const toolData = JSON.parse(jsonStr);
-                if (toolData.output && (toolData.output.includes('+-') || toolData.output.includes('|'))) {
-                    const markdownTable = convertMySQLOutputToMarkdown(toolData.output);
-                    if (markdownTable) {
-                        const parsedTable = parseMarkdownTable(markdownTable);
-                        if (parsedTable && parsedTable.headers && parsedTable.rows.length > 0) {
-                            mainLog('Successfully parsed step table data', parsedTable);
-                            return {
-                                type: 'table',
-                                title: 'Query Result',
-                                content: parsedTable,
-                                id: toolData.id || `step-table-${Date.now()}`,
-                                originalMarkdown: markdownTable,
-                                toolOutput: toolData.output
-                            };
-                        }
-                    }
-                }
-            } catch (e) {
-                mainLog('Error parsing JSON from step output:', e);
-            }
-        }
-    } catch (error) {
-        mainLog('Error extracting tool visualization:', error);
     }
     
-    return null;
+    mainLog('Converted MySQL output to markdown table', markdownTable);
+    return markdownTable;
 }
 
-function convertMySQLOutputToMarkdown(mysqlOutput) {
-    try {
-        if (!mysqlOutput) return null;
-        
-        // Split the MySQL output into lines
-        let lines = mysqlOutput.split('\n');
-        
-        // Filter out empty lines and keep only rows with data or separator lines
-        lines = lines.filter(line => line.trim().length > 0);
-        
-        if (lines.length < 3) {
-            mainLog('Not enough lines for a valid table');
-            return null; // Not enough lines for a valid table
-        }
-        
-        // Initialize markdown table lines
-        const markdownLines = [];
-        
-        // Process header line (second line, after the top border)
-        const headerLine = lines.find(line => line.includes('|') && !line.includes('+-'));
-        if (!headerLine) {
-            mainLog('No header line found in MySQL output');
-            return null;
-        }
-        
-        // Extract headers from the header line
-        const headers = headerLine.split('|')
-            .map(h => h.trim())
-            .filter(h => h.length > 0);
-        
-        if (headers.length === 0) {
-            mainLog('No valid headers found');
-            return null;
-        }
-        
-        // Add headers to markdown
-        markdownLines.push(`| ${headers.join(' | ')} |`);
-        
-        // Add separator line
-        markdownLines.push(`| ${headers.map(() => '---').join(' | ')} |`);
-        
-        // Process data rows (all lines that have | but are not headers or separator lines)
-        const dataLines = lines.filter(line => 
-            line.includes('|') && 
-            !line.includes('+-') && 
-            line !== headerLine
-        );
-        
-        // Add data rows to markdown
-        dataLines.forEach(line => {
-            const cells = line.split('|')
-                .map(c => c.trim())
-                .filter(c => c.length > 0);
-            
-            if (cells.length > 0) {
-                markdownLines.push(`| ${cells.join(' | ')} |`);
-            }
-        });
-        
-        // Make sure we have at least one data row
-        if (markdownLines.length < 3) {
-            mainLog('No data rows found');
-            return null;
-        }
-        
-        return markdownLines.join('\n');
-    } catch (error) {
-        mainLog('Error converting MySQL output to markdown:', error);
-        return null;
-    }
-}
-
-// Parse markdown table into structured data
-function parseMarkdownTable(markdownTable) {
-    if (!markdownTable) return null;
-    
-    try {
-        const lines = markdownTable.trim().split('\n');
-        if (lines.length < 3) return null; // Need at least header, separator, and one data row
-        
-        // Parse headers (first row)
-        const headerLine = lines[0];
-        const headers = headerLine.split('|')
-            .map(h => h.trim())
-            .filter(h => h.length > 0);
-        
-        if (headers.length === 0) return null;
-        
-        // Skip the separator line (line[1])
-        
-        // Parse data rows
-        const rows = [];
-        for (let i = 2; i < lines.length; i++) {
-            const line = lines[i].trim();
-            if (!line || !line.includes('|')) continue;
-            
-            const cells = line.split('|')
-                .map(c => c.trim())
-                .filter(c => c.length > 0);
-            
-            if (cells.length > 0) {
-                rows.push(cells);
-            }
-        }
-        
-        return { headers, rows };
-    } catch (error) {
-        mainLog('Error parsing markdown table:', error);
-        return null;
-    }
-}
-
+// Setup UI components with panel resize, etc.
 function setupUI() {
     mainLog('Setting up UI components');
     
@@ -2385,129 +1900,44 @@ function setupUI() {
     // Add custom styles for visualization panel
     const styleElement = document.createElement('style');
     styleElement.textContent = `
-        .column-resizer:hover {
-            opacity: 0.8 !important;
-            width: 10px !important;
-        }
-        
-        .visualization-wrapper {
-            position: relative;
+        .visualization-item {
             margin: 1rem;
-            min-width: 200px;
-            min-height: 100px;
+            padding: 1rem;
+            border: 1px solid #ddd;
             border-radius: 8px;
             background: white;
             box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-            border: 1px solid #ddd;
-            cursor: move;
         }
         
-        .visualization-item {
-            position: relative;
-            padding: 1rem;
-            width: 100%;
-            height: 100%;
-            overflow: auto;
-            box-sizing: border-box;
+        .visualization-header {
+            font-weight: bold;
+            margin-bottom: 0.5rem;
+            border-bottom: 1px solid #eee;
+            padding-bottom: 0.5rem;
         }
         
         .data-table {
             width: 100%;
             border-collapse: collapse;
-            table-layout: fixed;
+            margin-top: 0.5rem;
         }
         
         .data-table th, .data-table td {
             border: 1px solid #ddd;
-            padding: 8px;
-            overflow: hidden;
-            text-overflow: ellipsis;
+            padding: 0.5rem;
+            text-align: left;
         }
         
         .data-table th {
-            position: relative;
             background-color: #f5f5f5;
-            user-select: none;
+            font-weight: bold;
         }
         
-        /* Resize handle for visualization items - subtle version */
-        .resize-handle {
-            position: absolute;
-            background-color: transparent;
-            z-index: 10;
+        .data-table tr:nth-child(even) {
+            background-color: #f9f9f9;
         }
         
-        /* Make resize handles slightly visible on hover */
-        .visualization-wrapper:hover .resize-handle:hover {
-            background-color: rgba(0, 119, 204, 0.3);
-        }
-        
-        /* Individual resize handles */
-        .resize-n {
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 6px;
-            cursor: n-resize;
-        }
-        
-        .resize-e {
-            top: 0;
-            right: 0;
-            width: 6px;
-            height: 100%;
-            cursor: e-resize;
-        }
-        
-        .resize-s {
-            bottom: 0;
-            left: 0;
-            width: 100%;
-            height: 6px;
-            cursor: s-resize;
-        }
-        
-        .resize-w {
-            top: 0;
-            left: 0;
-            width: 6px;
-            height: 100%;
-            cursor: w-resize;
-        }
-        
-        .resize-ne {
-            top: 0;
-            right: 0;
-            width: 10px;
-            height: 10px;
-            cursor: ne-resize;
-        }
-        
-        .resize-se {
-            bottom: 0;
-            right: 0;
-            width: 10px;
-            height: 10px;
-            cursor: se-resize;
-        }
-        
-        .resize-sw {
-            bottom: 0;
-            left: 0;
-            width: 10px;
-            height: 10px;
-            cursor: sw-resize;
-        }
-        
-        .resize-nw {
-            top: 0;
-            left: 0;
-            width: 10px;
-            height: 10px;
-            cursor: nw-resize;
-        }
-        
-        .visualization-wrapper.highlight {
+        .visualization-item.highlight {
             animation: highlight-pulse 2s;
         }
         
@@ -2516,10 +1946,30 @@ function setupUI() {
             50% { box-shadow: 0 0 0 10px rgba(66, 133, 244, 0); }
             100% { box-shadow: 0 0 0 0 rgba(66, 133, 244, 0); }
         }
+        
+        .view-visualization-btn {
+            background-color: #4285f4;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            padding: 0.3rem 0.6rem;
+            margin-top: 0.5rem;
+            cursor: pointer;
+            font-size: 0.8rem;
+        }
+        
+        .view-visualization-btn:hover {
+            background-color: #3367d6;
+        }
+        
+        .step-item.has-visualization {
+            border-left: 3px solid #4285f4;
+        }
     `;
     document.head.appendChild(styleElement);
 }
 
+// Helper function to safely parse MySQL/table output from tool results
 function extractToolVisualization(content) {
     if (!content) return null;
     
@@ -2627,6 +2077,7 @@ function extractToolVisualization(content) {
     return null;
 }
 
+// Convert MySQL table output to markdown format
 function convertMySQLOutputToMarkdown(mysqlOutput) {
     try {
         if (!mysqlOutput) return null;
@@ -2737,4 +2188,131 @@ function parseMarkdownTable(markdownTable) {
         mainLog('Error parsing markdown table:', error);
         return null;
     }
+}
+
+// Add a visualization item to the visualization panel
+function addVisualizationItem(data, sourceId = null) {
+    if (!data) {
+        mainLog('No visualization data to add');
+        return;
+    }
+    
+    mainLog('Adding visualization item', data);
+    
+    // Get the visualization panel
+    const workspace = document.getElementById('output-workspace');
+    if (!workspace) {
+        mainLog('Visualization workspace not found');
+        return;
+    }
+    
+    // Remove "empty" message if it exists
+    const emptyMsg = workspace.querySelector('.empty-output');
+    if (emptyMsg) {
+        emptyMsg.style.display = 'none';
+    }
+    
+    // Create a new visualization item container
+    const item = document.createElement('div');
+    item.className = 'visualization-item';
+    item.dataset.source = data.id || sourceId || `vis-${Date.now()}`;
+    
+    // Add the appropriate header
+    const header = document.createElement('div');
+    header.className = 'visualization-header';
+    header.innerHTML = `<h3>${data.title || 'Query Result'}</h3>`;
+    item.appendChild(header);
+    
+    // Create content based on visualization type
+    const content = document.createElement('div');
+    content.className = 'visualization-content';
+    
+    if (data.type === 'table' && data.content && data.content.headers && data.content.rows) {
+        // Create table element
+        const table = document.createElement('table');
+        table.className = 'data-table';
+        
+        // Add table headers
+        const thead = document.createElement('thead');
+        const headerRow = document.createElement('tr');
+        
+        data.content.headers.forEach(header => {
+            const th = document.createElement('th');
+            th.textContent = header;
+            headerRow.appendChild(th);
+        });
+        
+        thead.appendChild(headerRow);
+        table.appendChild(thead);
+        
+        // Add table rows
+        const tbody = document.createElement('tbody');
+        
+        data.content.rows.forEach(row => {
+            const tr = document.createElement('tr');
+            
+            // Handle both array format and object format
+            if (Array.isArray(row)) {
+                // Array format
+                row.forEach(cell => {
+                    const td = document.createElement('td');
+                    td.textContent = cell;
+                    tr.appendChild(td);
+                });
+            } else {
+                // Object format (using headers as keys)
+                data.content.headers.forEach(header => {
+                    const td = document.createElement('td');
+                    td.textContent = row[header] || '';
+                    tr.appendChild(td);
+                });
+            }
+            
+            tbody.appendChild(tr);
+        });
+        
+        table.appendChild(tbody);
+        content.appendChild(table);
+        
+        // Show debug info about the table
+        mainLog('Created table visualization with:', { 
+            headers: data.content.headers, 
+            rowCount: data.content.rows.length 
+        });
+    } else {
+        // Default to pre-formatted text for unknown types
+        content.innerHTML = `<pre>${JSON.stringify(data.content || data, null, 2)}</pre>`;
+        mainLog('Created default visualization (not a table)');
+    }
+    
+    item.appendChild(content);
+    
+    // Add to the visualization panel
+    workspace.appendChild(item);
+    
+    // Highlight the item briefly to draw attention
+    setTimeout(() => {
+        item.classList.add('highlight');
+        setTimeout(() => {
+            item.classList.remove('highlight');
+        }, 2000);
+    }, 100);
+    
+    // Add to the output items array for tracking
+    outputItems.push({
+        id: data.id || sourceId,
+        element: item,
+        data: data
+    });
+    
+    return item;
+}
+
+function ensureStepContainer(container) {
+    let stepContainer = container.querySelector('.step-container');
+    if (!stepContainer) {
+        container.innerHTML = '<div class="step-container"></div>';
+        stepContainer = container.querySelector('.step-container');
+    }
+    return stepContainer;
 }
