@@ -1256,17 +1256,52 @@ function collectFormData() {
 function extractVisualization(content) {
     if (!content) return null;
     
-    // Check for markdown tables
+    // If content is an object and has base64_image, treat as image
+    if (typeof content === 'object' && content.base64_image) {
+        return {
+            type: 'image',
+            title: 'Generated Image',
+            base64: content.base64_image,
+            cleanedContent: content.output || ''
+        };
+    }
+
+    // If content is a JSON string, try to parse it
+    if (typeof content === 'string') {
+        try {
+            const parsed = JSON.parse(content);
+            if (parsed && parsed.base64_image) {
+                return {
+                    type: 'image',
+                    title: 'Generated Image',
+                    base64: parsed.base64_image,
+                    cleanedContent: parsed.output || ''
+                };
+            }
+        } catch (e) {
+            // Not JSON, fall through to regex
+        }
+
+        // Existing regex for base64 image in string
+        const base64ImageRegex = /data:image\/(png|jpeg|jpg);base64,[A-Za-z0-9+/=]+/g;
+        const imgMatch = content.match(base64ImageRegex);
+        if (imgMatch && imgMatch.length > 0) {
+            return {
+                type: 'image',
+                title: 'Generated Image',
+                base64: imgMatch[0],
+                cleanedContent: content.replace(imgMatch[0], '')
+            };
+        }
+    }
+
+    // Existing table extraction logic...
     const tableRegex = /\|[\s\S]*?\|\n[\s\S]*?\|[\s\S]*?(\n\n|\n$|$)/g;
-    const tableMatches = content.match(tableRegex);
-    
+    const tableMatches = typeof content === 'string' ? content.match(tableRegex) : null;
     if (tableMatches && tableMatches.length > 0) {
-        // Parse the first table found
         const tableData = parseMarkdownTable(tableMatches[0]);
         if (tableData && tableData.headers && tableData.rows && tableData.rows.length > 0) {
-            // Remove the table from the content for chat display
             const cleanedContent = content.replace(tableMatches[0], '');
-            
             return {
                 type: 'table',
                 title: 'Generated Table',
@@ -1276,9 +1311,6 @@ function extractVisualization(content) {
             };
         }
     }
-    
-    // TODO: Add support for other visualizations like charts, images, etc.
-    
     return null;
 }
 
@@ -1286,40 +1318,114 @@ function extractVisualization(content) {
 function parseMarkdownTable(markdownTable) {
     if (!markdownTable) return null;
     
-    const lines = markdownTable.trim().split('\n');
-    if (lines.length < 3) return null; // Need at least header, separator, and one data row
-    
-    // Parse headers (first row)
-    const headerLine = lines[0];
-    const headers = headerLine.split('|')
-        .map(h => h.trim())
-        .filter(h => h.length > 0);
-    
-    // Skip the separator line (line[1])
-    
-    // Parse data rows
-    const rows = [];
-    for (let i = 2; i < lines.length; i++) {
-        const line = lines[i].trim();
-        if (!line || !line.includes('|')) continue;
+    try {
+        const lines = markdownTable.trim().split('\n');
+        if (lines.length < 3) return null; // Need at least header, separator, and one data row
         
-        const cells = line.split('|')
-            .map(c => c.trim())
-            .filter((c, idx) => idx > 0 && idx <= headers.length);
+        // Parse headers (first row)
+        const headerLine = lines[0];
+        const headers = headerLine.split('|')
+            .map(h => h.trim())
+            .filter(h => h.length > 0);
         
-        if (cells.length > 0) {
-            const row = {};
-            headers.forEach((header, index) => {
-                row[header] = cells[index] || '';
-            });
-            rows.push(row);
+        if (headers.length === 0) return null;
+        
+        // Skip the separator line (line[1])
+        
+        // Parse data rows
+        const rows = [];
+        for (let i = 2; i < lines.length; i++) {
+            const line = lines[i].trim();
+            if (!line || !line.includes('|')) continue;
+            
+            const cells = line.split('|')
+                .map(c => c.trim())
+                .filter(c => c.length > 0);
+            
+            if (cells.length > 0) {
+                rows.push(cells);
+            }
         }
+        
+        return { headers, rows };
+    } catch (error) {
+        mainLog('Error parsing markdown table:', error);
+        return null;
     }
-    
-    return { headers, rows };
 }
 
-// Add a visualization item to the output workspace
+function convertMySQLOutputToMarkdown(mysqlOutput) {
+    if (!mysqlOutput) return null;
+    
+    try {
+        // Split the MySQL output into lines
+        let lines = mysqlOutput.split('\n');
+        
+        // Filter out empty lines and keep only rows with data or separator lines
+        lines = lines.filter(line => line.trim().length > 0);
+        
+        if (lines.length < 3) {
+            mainLog('Not enough lines for a valid table');
+            return null; // Not enough lines for a valid table
+        }
+        
+        // Initialize markdown table lines
+        const markdownLines = [];
+        
+        // Process header line (second line, after the top border)
+        const headerLine = lines.find(line => line.includes('|') && !line.includes('+-'));
+        if (!headerLine) {
+            mainLog('No header line found in MySQL output');
+            return null;
+        }
+        
+        // Extract headers from the header line
+        const headers = headerLine.split('|')
+            .map(h => h.trim())
+            .filter(h => h.length > 0);
+        
+        if (headers.length === 0) {
+            mainLog('No valid headers found');
+            return null;
+        }
+        
+        // Add headers to markdown
+        markdownLines.push(`| ${headers.join(' | ')} |`);
+        
+        // Add separator line
+        markdownLines.push(`| ${headers.map(() => '---').join(' | ')} |`);
+        
+        // Process data rows (all lines that have | but are not headers or separator lines)
+        const dataLines = lines.filter(line => 
+            line.includes('|') && 
+            !line.includes('+-') && 
+            line !== headerLine
+        );
+        
+        // Add data rows to markdown
+        dataLines.forEach(line => {
+            const cells = line.split('|')
+                .map(c => c.trim())
+                .filter(c => c.length > 0);
+            
+            if (cells.length > 0) {
+                markdownLines.push(`| ${cells.join(' | ')} |`);
+            }
+        });
+        
+        // Make sure we have at least one data row
+        if (markdownLines.length < 3) {
+            mainLog('No data rows found');
+            return null;
+        }
+        
+        return markdownLines.join('\n');
+    } catch (error) {
+        mainLog('Error converting MySQL output to markdown:', error);
+        return null;
+    }
+}
+
 function addVisualizationItem(data, sourceId = null) {
     if (!data) return;
     
@@ -1502,6 +1608,15 @@ function addVisualizationItem(data, sourceId = null) {
                 th.appendChild(grip);
             });
         }, 100);
+    } else if (data.type === 'image' && data.base64) {
+        const img = document.createElement('img');
+        img.src = data.base64;
+        img.alt = data.title || 'Generated Image';
+        img.style.maxWidth = '100%';
+        img.style.maxHeight = '320px';
+        img.className = 'visualization-image';
+        img.addEventListener('click', () => showFullImage(data.base64));
+        content.appendChild(img);
     } else {
         // Default to pre-formatted text for unknown types
         content.innerHTML = `<pre>${JSON.stringify(data.content || data, null, 2)}</pre>`;
@@ -2278,6 +2393,225 @@ function parseMarkdownTable(markdownTable) {
     }
 }
 
+function extractToolVisualization(content) {
+    if (!content) return null;
+    
+    try {
+        mainLog('Attempting to extract visualization from:', content);
+        
+        // Try different extraction methods
+        
+        // Method 1: Direct JSON pattern in tool output
+        const jsonMatch = content.match(/Observed output of cmd.*?executed:\s*(\{.*?\})/s);
+        if (jsonMatch) {
+            const jsonStr = jsonMatch[1];
+            mainLog('Found JSON in tool output:', jsonStr);
+            try {
+                const toolData = JSON.parse(jsonStr);
+                
+                // Check if this has visualization data
+                if (toolData.output) {
+                    // For MySQL tables or other tabular data
+                    if (toolData.visualization_type === 'table' || 
+                       (toolData.output.includes('+-') && toolData.output.includes('-+') && toolData.output.includes('|'))) {
+                        
+                        mainLog('Detected MySQL table format in output');
+                        const markdownTable = convertMySQLOutputToMarkdown(toolData.output);
+                        if (markdownTable) {
+                            const parsedTable = parseMarkdownTable(markdownTable);
+                            if (parsedTable && parsedTable.headers && parsedTable.rows.length > 0) {
+                                mainLog('Successfully parsed table data', parsedTable);
+                                return {
+                                    type: 'table',
+                                    title: 'Query Result',
+                                    content: parsedTable,
+                                    id: toolData.id || null,
+                                    originalMarkdown: markdownTable,
+                                    toolOutput: toolData.output
+                                };
+                            }
+                        }
+                    }
+                }
+            } catch (e) {
+                mainLog('Error parsing JSON from tool output:', e);
+            }
+        }
+        
+        // Method 2: Look for MySQL output format directly
+        if (content.includes('+---') && content.includes('|')) {
+            const tableLines = content.split('\n').filter(line => 
+                line.includes('|') || line.includes('+---'));
+            
+            if (tableLines.length > 2) {
+                const tableText = tableLines.join('\n');
+                mainLog('Found MySQL table format directly:', tableText);
+                
+                const markdownTable = convertMySQLOutputToMarkdown(tableText);
+                if (markdownTable) {
+                    const parsedTable = parseMarkdownTable(markdownTable);
+                    if (parsedTable && parsedTable.headers && parsedTable.rows.length > 0) {
+                        return {
+                            type: 'table',
+                            title: 'Query Result',
+                            content: parsedTable,
+                            id: `direct-table-${Date.now()}`,
+                            originalMarkdown: markdownTable,
+                            toolOutput: tableText
+                        };
+                    }
+                }
+            }
+        }
+        
+        // Method 3: Look for Step content with mysql_rw execution
+        const stepMatch = content.match(/Step \d+: Observed output of cmd `mysql_rw` executed:\s*(\{.*?\})/s);
+        if (stepMatch) {
+            const jsonStr = stepMatch[1];
+            mainLog('Found mysql_rw output in step content:', jsonStr);
+            
+            try {
+                const toolData = JSON.parse(jsonStr);
+                if (toolData.output && (toolData.output.includes('+-') || toolData.output.includes('|'))) {
+                    const markdownTable = convertMySQLOutputToMarkdown(toolData.output);
+                    if (markdownTable) {
+                        const parsedTable = parseMarkdownTable(markdownTable);
+                        if (parsedTable && parsedTable.headers && parsedTable.rows.length > 0) {
+                            mainLog('Successfully parsed step table data', parsedTable);
+                            return {
+                                type: 'table',
+                                title: 'Query Result',
+                                content: parsedTable,
+                                id: toolData.id || `step-table-${Date.now()}`,
+                                originalMarkdown: markdownTable,
+                                toolOutput: toolData.output
+                            };
+                        }
+                    }
+                }
+            } catch (e) {
+                mainLog('Error parsing JSON from step output:', e);
+            }
+        }
+    } catch (error) {
+        mainLog('Error extracting tool visualization:', error);
+    }
+    
+    return null;
+}
+
+function convertMySQLOutputToMarkdown(mysqlOutput) {
+    try {
+        if (!mysqlOutput) return null;
+        
+        // Split the MySQL output into lines
+        let lines = mysqlOutput.split('\n');
+        
+        // Filter out empty lines and keep only rows with data or separator lines
+        lines = lines.filter(line => line.trim().length > 0);
+        
+        if (lines.length < 3) {
+            mainLog('Not enough lines for a valid table');
+            return null; // Not enough lines for a valid table
+        }
+        
+        // Initialize markdown table lines
+        const markdownLines = [];
+        
+        // Process header line (second line, after the top border)
+        const headerLine = lines.find(line => line.includes('|') && !line.includes('+-'));
+        if (!headerLine) {
+            mainLog('No header line found in MySQL output');
+            return null;
+        }
+        
+        // Extract headers from the header line
+        const headers = headerLine.split('|')
+            .map(h => h.trim())
+            .filter(h => h.length > 0);
+        
+        if (headers.length === 0) {
+            mainLog('No valid headers found');
+            return null;
+        }
+        
+        // Add headers to markdown
+        markdownLines.push(`| ${headers.join(' | ')} |`);
+        
+        // Add separator line
+        markdownLines.push(`| ${headers.map(() => '---').join(' | ')} |`);
+        
+        // Process data rows (all lines that have | but are not headers or separator lines)
+        const dataLines = lines.filter(line => 
+            line.includes('|') && 
+            !line.includes('+-') && 
+            line !== headerLine
+        );
+        
+        // Add data rows to markdown
+        dataLines.forEach(line => {
+            const cells = line.split('|')
+                .map(c => c.trim())
+                .filter(c => c.length > 0);
+            
+            if (cells.length > 0) {
+                markdownLines.push(`| ${cells.join(' | ')} |`);
+            }
+        });
+        
+        // Make sure we have at least one data row
+        if (markdownLines.length < 3) {
+            mainLog('No data rows found');
+            return null;
+        }
+        
+        return markdownLines.join('\n');
+    } catch (error) {
+        mainLog('Error converting MySQL output to markdown:', error);
+        return null;
+    }
+}
+
+// Parse markdown table into structured data
+function parseMarkdownTable(markdownTable) {
+    if (!markdownTable) return null;
+    
+    try {
+        const lines = markdownTable.trim().split('\n');
+        if (lines.length < 3) return null; // Need at least header, separator, and one data row
+        
+        // Parse headers (first row)
+        const headerLine = lines[0];
+        const headers = headerLine.split('|')
+            .map(h => h.trim())
+            .filter(h => h.length > 0);
+        
+        if (headers.length === 0) return null;
+        
+        // Skip the separator line (line[1])
+        
+        // Parse data rows
+        const rows = [];
+        for (let i = 2; i < lines.length; i++) {
+            const line = lines[i].trim();
+            if (!line || !line.includes('|')) continue;
+            
+            const cells = line.split('|')
+                .map(c => c.trim())
+                .filter(c => c.length > 0);
+            
+            if (cells.length > 0) {
+                rows.push(cells);
+            }
+        }
+        
+        return { headers, rows };
+    } catch (error) {
+        mainLog('Error parsing markdown table:', error);
+        return null;
+    }
+}
+
 function setupUI() {
     mainLog('Setting up UI components');
     
@@ -2518,223 +2852,4 @@ function setupUI() {
         }
     `;
     document.head.appendChild(styleElement);
-}
-
-function extractToolVisualization(content) {
-    if (!content) return null;
-    
-    try {
-        mainLog('Attempting to extract visualization from:', content);
-        
-        // Try different extraction methods
-        
-        // Method 1: Direct JSON pattern in tool output
-        const jsonMatch = content.match(/Observed output of cmd.*?executed:\s*(\{.*?\})/s);
-        if (jsonMatch) {
-            const jsonStr = jsonMatch[1];
-            mainLog('Found JSON in tool output:', jsonStr);
-            try {
-                const toolData = JSON.parse(jsonStr);
-                
-                // Check if this has visualization data
-                if (toolData.output) {
-                    // For MySQL tables or other tabular data
-                    if (toolData.visualization_type === 'table' || 
-                       (toolData.output.includes('+-') && toolData.output.includes('-+') && toolData.output.includes('|'))) {
-                        
-                        mainLog('Detected MySQL table format in output');
-                        const markdownTable = convertMySQLOutputToMarkdown(toolData.output);
-                        if (markdownTable) {
-                            const parsedTable = parseMarkdownTable(markdownTable);
-                            if (parsedTable && parsedTable.headers && parsedTable.rows.length > 0) {
-                                mainLog('Successfully parsed table data', parsedTable);
-                                return {
-                                    type: 'table',
-                                    title: 'Query Result',
-                                    content: parsedTable,
-                                    id: toolData.id || null,
-                                    originalMarkdown: markdownTable,
-                                    toolOutput: toolData.output
-                                };
-                            }
-                        }
-                    }
-                }
-            } catch (e) {
-                mainLog('Error parsing JSON from tool output:', e);
-            }
-        }
-        
-        // Method 2: Look for MySQL output format directly
-        if (content.includes('+---') && content.includes('|')) {
-            const tableLines = content.split('\n').filter(line => 
-                line.includes('|') || line.includes('+---'));
-            
-            if (tableLines.length > 2) {
-                const tableText = tableLines.join('\n');
-                mainLog('Found MySQL table format directly:', tableText);
-                
-                const markdownTable = convertMySQLOutputToMarkdown(tableText);
-                if (markdownTable) {
-                    const parsedTable = parseMarkdownTable(markdownTable);
-                    if (parsedTable && parsedTable.headers && parsedTable.rows.length > 0) {
-                        return {
-                            type: 'table',
-                            title: 'Query Result',
-                            content: parsedTable,
-                            id: `direct-table-${Date.now()}`,
-                            originalMarkdown: markdownTable,
-                            toolOutput: tableText
-                        };
-                    }
-                }
-            }
-        }
-        
-        // Method 3: Look for Step content with mysql_rw execution
-        const stepMatch = content.match(/Step \d+: Observed output of cmd `mysql_rw` executed:\s*(\{.*?\})/s);
-        if (stepMatch) {
-            const jsonStr = stepMatch[1];
-            mainLog('Found mysql_rw output in step content:', jsonStr);
-            
-            try {
-                const toolData = JSON.parse(jsonStr);
-                if (toolData.output && (toolData.output.includes('+-') || toolData.output.includes('|'))) {
-                    const markdownTable = convertMySQLOutputToMarkdown(toolData.output);
-                    if (markdownTable) {
-                        const parsedTable = parseMarkdownTable(markdownTable);
-                        if (parsedTable && parsedTable.headers && parsedTable.rows.length > 0) {
-                            mainLog('Successfully parsed step table data', parsedTable);
-                            return {
-                                type: 'table',
-                                title: 'Query Result',
-                                content: parsedTable,
-                                id: toolData.id || `step-table-${Date.now()}`,
-                                originalMarkdown: markdownTable,
-                                toolOutput: toolData.output
-                            };
-                        }
-                    }
-                }
-            } catch (e) {
-                mainLog('Error parsing JSON from step output:', e);
-            }
-        }
-    } catch (error) {
-        mainLog('Error extracting tool visualization:', error);
-    }
-    
-    return null;
-}
-
-function convertMySQLOutputToMarkdown(mysqlOutput) {
-    try {
-        if (!mysqlOutput) return null;
-        
-        // Split the MySQL output into lines
-        let lines = mysqlOutput.split('\n');
-        
-        // Filter out empty lines and keep only rows with data or separator lines
-        lines = lines.filter(line => line.trim().length > 0);
-        
-        if (lines.length < 3) {
-            mainLog('Not enough lines for a valid table');
-            return null; // Not enough lines for a valid table
-        }
-        
-        // Initialize markdown table lines
-        const markdownLines = [];
-        
-        // Process header line (second line, after the top border)
-        const headerLine = lines.find(line => line.includes('|') && !line.includes('+-'));
-        if (!headerLine) {
-            mainLog('No header line found in MySQL output');
-            return null;
-        }
-        
-        // Extract headers from the header line
-        const headers = headerLine.split('|')
-            .map(h => h.trim())
-            .filter(h => h.length > 0);
-        
-        if (headers.length === 0) {
-            mainLog('No valid headers found');
-            return null;
-        }
-        
-        // Add headers to markdown
-        markdownLines.push(`| ${headers.join(' | ')} |`);
-        
-        // Add separator line
-        markdownLines.push(`| ${headers.map(() => '---').join(' | ')} |`);
-        
-        // Process data rows (all lines that have | but are not headers or separator lines)
-        const dataLines = lines.filter(line => 
-            line.includes('|') && 
-            !line.includes('+-') && 
-            line !== headerLine
-        );
-        
-        // Add data rows to markdown
-        dataLines.forEach(line => {
-            const cells = line.split('|')
-                .map(c => c.trim())
-                .filter(c => c.length > 0);
-            
-            if (cells.length > 0) {
-                markdownLines.push(`| ${cells.join(' | ')} |`);
-            }
-        });
-        
-        // Make sure we have at least one data row
-        if (markdownLines.length < 3) {
-            mainLog('No data rows found');
-            return null;
-        }
-        
-        return markdownLines.join('\n');
-    } catch (error) {
-        mainLog('Error converting MySQL output to markdown:', error);
-        return null;
-    }
-}
-
-// Parse markdown table into structured data
-function parseMarkdownTable(markdownTable) {
-    if (!markdownTable) return null;
-    
-    try {
-        const lines = markdownTable.trim().split('\n');
-        if (lines.length < 3) return null; // Need at least header, separator, and one data row
-        
-        // Parse headers (first row)
-        const headerLine = lines[0];
-        const headers = headerLine.split('|')
-            .map(h => h.trim())
-            .filter(h => h.length > 0);
-        
-        if (headers.length === 0) return null;
-        
-        // Skip the separator line (line[1])
-        
-        // Parse data rows
-        const rows = [];
-        for (let i = 2; i < lines.length; i++) {
-            const line = lines[i].trim();
-            if (!line || !line.includes('|')) continue;
-            
-            const cells = line.split('|')
-                .map(c => c.trim())
-                .filter(c => c.length > 0);
-            
-            if (cells.length > 0) {
-                rows.push(cells);
-            }
-        }
-        
-        return { headers, rows };
-    } catch (error) {
-        mainLog('Error parsing markdown table:', error);
-        return null;
-    }
 }

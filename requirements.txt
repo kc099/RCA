@@ -1,4 +1,5 @@
 pydantic~=2.10.6
+pydantic[email]
 openai~=1.66.3
 tenacity~=9.0.0
 pyyaml~=6.0.2
