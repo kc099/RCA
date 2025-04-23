@@ -881,14 +881,28 @@ function handleToolResultVisualization(event) {
         
         // Extract table content before creating the panel to validate it
         let tableContent = '';
+        let isJsonSchema = false;
+        
         if (event.result && event.result.output) {
             tableContent = event.result.output;
+            
+            // Check if this is a JSON schema result
+            if (typeof tableContent === 'string' && tableContent.includes('"COLUMN_NAME"') && 
+                tableContent.includes('"DATA_TYPE"')) {
+                isJsonSchema = true;
+            }
         } else if (typeof event.result === 'string') {
             tableContent = event.result;
+            
+            // Check if this is a JSON schema result
+            if (tableContent.includes('"COLUMN_NAME"') && tableContent.includes('"DATA_TYPE"')) {
+                isJsonSchema = true;
+            }
         }
         
-        // Only proceed if we have content and it looks like a table
-        if (!tableContent || !(tableContent.includes('|') && tableContent.includes('+'))) {
+        // Check if we have valid content - either ASCII table or JSON schema
+        if (!tableContent || 
+            (!isJsonSchema && !(tableContent.includes('|') && tableContent.includes('+')))) {
             console.log('No valid table content found, skipping visualization');
             return false;
         }
@@ -933,10 +947,17 @@ function handleToolResultVisualization(event) {
             const tableWrapper = document.createElement('div');
             tableWrapper.className = 'table-wrapper';
             
-            // Convert ASCII table to HTML
-            const htmlTable = convertAsciiTableToHtml(tableContent);
-            tableWrapper.innerHTML = htmlTable;
+            let htmlTable = '';
             
+            // Check if this is a JSON schema result
+            if (isJsonSchema) {
+                htmlTable = convertJsonSchemaToHtml(tableContent);
+            } else {
+                // Convert ASCII table to HTML
+                htmlTable = convertAsciiTableToHtml(tableContent);
+            }
+            
+            tableWrapper.innerHTML = htmlTable;
             content.appendChild(tableWrapper);
         }
         
@@ -961,23 +982,101 @@ function handleToolResultVisualization(event) {
         const panelWidth = Math.min(workspaceRect.width * 0.8, 800);
         const panelHeight = Math.min(workspaceRect.height * 0.6, 500);
         
-        // Need to check if there are existing panels to adjust vertical placement
-        const existingPanels = outputWorkspace.querySelectorAll('.visualization-panel');
-        let topPosition = 50; // Starting position 
+        // Get all existing panels to find a non-overlapping position
+        const existingPanels = Array.from(outputWorkspace.querySelectorAll('.visualization-panel'))
+            .filter(p => p !== panel);
         
-        if (existingPanels.length > 1) {
-            // Calculate a position that doesn't directly overlap with other panels
-            // Basic offset strategy - each new panel shifted down and to the right
-            topPosition = (existingPanels.length - 1) * 50;
+        // Default starting position
+        let topPosition = 50;
+        let leftPosition = Math.max(20, (workspaceRect.width - panelWidth) / 2);
+        
+        // If we have existing panels, find a non-overlapping position
+        if (existingPanels.length > 0) {
+            // Create a grid system for panel placement
+            const gridCellSize = 50; // Size of each grid cell
+            const occupiedCells = new Set();
+            
+            // Mark occupied cells for all existing panels
+            existingPanels.forEach(existingPanel => {
+                const rect = existingPanel.getBoundingClientRect();
+                const workspaceTop = workspaceRect.top;
+                const workspaceLeft = workspaceRect.left;
+                
+                // Convert panel position to grid coordinates
+                const panelLeft = parseInt(existingPanel.style.left);
+                const panelTop = parseInt(existingPanel.style.top);
+                const panelRight = panelLeft + rect.width;
+                const panelBottom = panelTop + rect.height;
+                
+                // Mark all cells this panel occupies as taken
+                for (let x = Math.floor(panelLeft / gridCellSize); x <= Math.ceil(panelRight / gridCellSize); x++) {
+                    for (let y = Math.floor(panelTop / gridCellSize); y <= Math.ceil(panelBottom / gridCellSize); y++) {
+                        occupiedCells.add(`${x},${y}`);
+                    }
+                }
+            });
+            
+            // Find first available position using grid
+            let foundPosition = false;
+            const maxGridX = Math.floor(workspaceRect.width / gridCellSize);
+            const maxGridY = Math.floor(workspaceRect.height / gridCellSize) * 2; // Allow scrolling
+            
+            // Try to find a suitable position in the grid
+            for (let y = 1; y < maxGridY && !foundPosition; y++) {
+                for (let x = 0; x < maxGridX && !foundPosition; x++) {
+                    // Check if this position and surrounding area is free
+                    const gridPosX = x * gridCellSize;
+                    const gridPosY = y * gridCellSize;
+                    const panelWidthInCells = Math.ceil(panelWidth / gridCellSize);
+                    const panelHeightInCells = Math.ceil(panelHeight / gridCellSize);
+                    
+                    let isPositionFree = true;
+                    
+                    // Check if any cell in the panel area is occupied
+                    for (let checkX = x; checkX < x + panelWidthInCells && isPositionFree; checkX++) {
+                        for (let checkY = y; checkY < y + panelHeightInCells && isPositionFree; checkY++) {
+                            if (occupiedCells.has(`${checkX},${checkY}`)) {
+                                isPositionFree = false;
+                            }
+                        }
+                    }
+                    
+                    if (isPositionFree) {
+                        leftPosition = gridPosX;
+                        topPosition = gridPosY;
+                        foundPosition = true;
+                    }
+                }
+            }
+            
+            // If no position found, place below the lowest panel
+            if (!foundPosition) {
+                // Find the lowest panel
+                let lowestBottom = 0;
+                existingPanels.forEach(existingPanel => {
+                    const panelTop = parseInt(existingPanel.style.top);
+                    const panelHeight = existingPanel.getBoundingClientRect().height;
+                    const bottom = panelTop + panelHeight;
+                    lowestBottom = Math.max(lowestBottom, bottom);
+                });
+                
+                topPosition = lowestBottom + 20;
+                leftPosition = 20;
+            }
         }
         
         // Set panel dimensions and position
         panel.style.position = 'absolute';
         panel.style.width = `${panelWidth}px`;
         panel.style.height = `${panelHeight}px`;
-        panel.style.left = `${Math.max(20, (workspaceRect.width - panelWidth) / 2)}px`;
+        panel.style.left = `${leftPosition}px`;
         panel.style.top = `${topPosition}px`;
         panel.style.zIndex = '10';
+        
+        // Auto-scroll to show new panel if it's below the visible area
+        if (topPosition + panelHeight > outputWorkspace.clientHeight) {
+            outputWorkspace.scrollTop = topPosition - 20;
+        }
         
         // Setup dragging
         setupDraggablePanel(panel, header);
@@ -1244,65 +1343,118 @@ function convertAsciiTableToHtml(asciiTable) {
     try {
         const lines = asciiTable.split('\n');
         let html = '<table class="data-table">';
-        let isHeader = true;
-        let hasContent = false;
         
-        for (let i = 0; i < lines.length; i++) {
-            const line = lines[i].trim();
+        // Check for header row
+        if (lines.length > 2 && lines[1].startsWith('+')) {
+            // Extract header row
+            const headerRow = lines[2].trim().split('|')
+                .filter(cell => cell.trim() !== '')
+                .map(cell => cell.trim());
             
-            // Skip separator lines
-            if (line.startsWith('+') && line.endsWith('+')) {
-                if (isHeader && i > 2) {
-                    // End of header section
-                    html += '</thead><tbody>';
-                    isHeader = false;
-                }
-                continue;
-            }
+            // Add header row
+            html += '<thead><tr>';
+            headerRow.forEach(cell => {
+                html += `<th>${cell}</th>`;
+            });
+            html += '</tr></thead>';
+        }
+        
+        // Extract data rows
+        const dataRows = lines.slice(3).filter(line => line.startsWith('|'));
+        
+        // Add data rows
+        html += '<tbody>';
+        dataRows.forEach(row => {
+            const cells = row.trim().split('|')
+                .filter(cell => cell.trim() !== '')
+                .map(cell => cell.trim());
             
-            // Process data rows
-            if (line.startsWith('|') && line.endsWith('|')) {
-                const cells = line.split('|')
-                    .filter(cell => cell.trim() !== '')
-                    .map(cell => cell.trim());
-                
-                if (cells.length > 0) {
-                    hasContent = true;
-                }
-                
-                if (i === 1 && isHeader) {
-                    // First row is header
-                    html += '<thead><tr>';
-                    cells.forEach(cell => {
-                        html += `<th>${cell}</th>`;
-                    });
-                    html += '</tr>';
-                } else {
-                    // Data row
-                    html += '<tr>';
-                    cells.forEach(cell => {
-                        html += `<td>${cell}</td>`;
-                    });
-                    html += '</tr>';
-                }
-            }
-        }
+            html += '<tr>';
+            cells.forEach(cell => {
+                html += `<td>${cell}</td>`;
+            });
+            html += '</tr>';
+        });
+        html += '</tbody>';
         
-        if (isHeader) {
-            html += '</thead>';
-        }
-        
-        html += '</tbody></table>';
-        
-        // If no content was found, return empty string
-        if (!hasContent) {
-            return '';
-        }
-        
+        html += '</table>';
         return html;
     } catch (error) {
         console.error('Error converting ASCII table to HTML:', error);
         return `<pre>${asciiTable}</pre>`;
+    }
+}
+
+/**
+ * Convert JSON schema to HTML table
+ */
+function convertJsonSchemaToHtml(jsonString) {
+    try {
+        // Try to parse the JSON string
+        let data = [];
+        
+        try {
+            // First try parsing it directly
+            data = JSON.parse(jsonString);
+        } catch (e) {
+            // If direct parsing fails, try to extract JSON from the string
+            // This handles cases where the JSON is embedded in a larger output
+            const jsonMatch = jsonString.match(/\{\"output\"\s*:\s*\"(.*)\"\s*,\s*\"id\"/);
+            
+            if (jsonMatch && jsonMatch[1]) {
+                // We need to handle escaped JSON strings
+                const extractedJson = jsonMatch[1]
+                    .replace(/\\n/g, '\n')
+                    .replace(/\\"/g, '"')
+                    .replace(/\\\\/g, '\\');
+                
+                // Parse the cleaned JSON
+                data = JSON.parse(extractedJson);
+            }
+        }
+        
+        // Ensure we have an array of objects
+        if (!Array.isArray(data)) {
+            console.error('Invalid JSON schema format, expected array');
+            return '<div class="error">Invalid schema format</div>';
+        }
+        
+        if (data.length === 0) {
+            return '<div class="empty-result">No columns found</div>';
+        }
+        
+        // Get all possible headers from all objects
+        const headers = Array.from(new Set(
+            data.flatMap(obj => Object.keys(obj))
+        ));
+        
+        // Create HTML table
+        let html = '<table class="data-table schema-table">';
+        
+        // Add header row
+        html += '<thead><tr>';
+        headers.forEach(header => {
+            html += `<th>${header}</th>`;
+        });
+        html += '</tr></thead>';
+        
+        // Add data rows
+        html += '<tbody>';
+        data.forEach(row => {
+            html += '<tr>';
+            headers.forEach(header => {
+                const value = row[header] !== undefined ? row[header] : '';
+                html += `<td>${value}</td>`;
+            });
+            html += '</tr>';
+        });
+        html += '</tbody>';
+        
+        html += '</table>';
+        return html;
+    } catch (error) {
+        console.error('Error converting JSON schema to HTML:', error);
+        return `<div class="error">Error converting schema: ${error.message}</div>`;
     }
 }
 
