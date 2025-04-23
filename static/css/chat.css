@@ -85,10 +85,214 @@
 
 /* Visualization containers */
 .visualization-container {
-    margin-top: 10px;
-    border: 1px solid #ddd;
-    border-radius: 4px;
+    flex: 1;
+    min-width: 60%;
+    height: 100%;
+    position: relative;
     overflow: hidden;
+    background: #f9f9f9;
+}
+
+#output-workspace {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    overflow: auto; /* Enable scrolling */
+    padding: 20px;
+}
+
+/* Visualization Panel Styles */
+.visualization-panel {
+    background: white;
+    border: 1px solid #ccc;
+    border-radius: 5px;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+    min-width: 300px;
+    min-height: 200px;
+    position: absolute; /* Always absolute positioning for dragging */
+    overflow: hidden;
+    transition: box-shadow 0.2s ease;
+    will-change: transform;
+}
+
+.visualization-panel.dragging {
+    box-shadow: 0 5px 15px rgba(0, 0, 0, 0.2);
+    opacity: 0.95;
+    z-index: 1000;
+}
+
+.visualization-panel.resizing {
+    opacity: 0.95;
+    z-index: 1000;
+}
+
+.panel-header {
+    background: #f5f5f5;
+    border-bottom: 1px solid #ddd;
+    padding: 8px 12px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    cursor: move;
+    user-select: none;
+    -webkit-user-select: none;
+    touch-action: none;
+}
+
+.panel-title {
+    font-weight: bold;
+    font-size: 14px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.panel-controls {
+    display: flex;
+    gap: 5px;
+}
+
+.panel-close {
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 16px;
+    color: #888;
+    border-radius: 50%;
+    width: 24px;
+    height: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.panel-close:hover {
+    background: #eee;
+    color: #333;
+}
+
+.panel-content {
+    padding: 12px;
+    overflow: auto;
+    height: calc(100% - 37px);
+}
+
+/* Resize handles for all 8 directions - make them more visible */
+.resize-handle {
+    position: absolute;
+    z-index: 10;
+    background-color: rgba(200, 200, 200, 0.3);
+    border: 1px solid rgba(100, 100, 100, 0.3);
+}
+
+/* Corner resize handles - make them larger and more visible */
+.resize-nw {
+    cursor: nw-resize;
+    width: 14px;
+    height: 14px;
+    top: -7px;
+    left: -7px;
+    border-radius: 50%;
+}
+
+.resize-ne {
+    cursor: ne-resize;
+    width: 14px;
+    height: 14px;
+    top: -7px;
+    right: -7px;
+    border-radius: 50%;
+}
+
+.resize-sw {
+    cursor: sw-resize;
+    width: 14px;
+    height: 14px;
+    bottom: -7px;
+    left: -7px;
+    border-radius: 50%;
+}
+
+.resize-se {
+    cursor: se-resize;
+    width: 14px;
+    height: 14px;
+    bottom: -7px;
+    right: -7px;
+    border-radius: 50%;
+}
+
+/* Edge resize handles - they span the full edge */
+.resize-n {
+    cursor: n-resize;
+    height: 8px;
+    left: 0;
+    right: 0;
+    top: -4px;
+}
+
+.resize-e {
+    cursor: e-resize;
+    width: 8px;
+    top: 0;
+    bottom: 0;
+    right: -4px;
+}
+
+.resize-s {
+    cursor: s-resize;
+    height: 8px;
+    left: 0;
+    right: 0;
+    bottom: -4px;
+}
+
+.resize-w {
+    cursor: w-resize;
+    width: 8px;
+    top: 0;
+    bottom: 0;
+    left: -4px;
+}
+
+/* Table styles - make tables look better */
+.table-wrapper {
+    overflow: auto;
+    max-height: 100%;
+    max-width: 100%;
+}
+
+.data-table {
+    border-collapse: collapse;
+    width: 100%;
+    font-size: 14px;
+}
+
+.data-table th, 
+.data-table td {
+    border: 1px solid #ddd;
+    padding: 8px 10px;
+    text-align: left;
+    white-space: nowrap;
+}
+
+.data-table th {
+    background-color: #f5f5f5;
+    font-weight: bold;
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    box-shadow: 0 1px 0 #ddd;
+}
+
+.data-table tr:nth-child(even) {
+    background-color: #f9f9f9;
+}
+
+.data-table tr:hover {
+    background-color: #f0f0f0;
 }
 
 /* Main layout - Chat panels and visualization area */
@@ -121,15 +325,6 @@
     background: #f9f9f9;
 }
 
-#output-workspace {
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    overflow: hidden;
-}
-
 /* Visualization Panel Styles */
 .visualization-panel {
     background: white;
@@ -138,19 +333,23 @@
     box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
     min-width: 300px;
     min-height: 200px;
-    position: absolute;
+    position: absolute; /* Always absolute positioning for dragging */
     overflow: hidden;
     transition: box-shadow 0.2s ease;
     will-change: transform;
+    margin-bottom: 20px;
 }
 
-.visualization-panel.dragging {
+.visualization-panel.dragging, 
+.visualization-panel.floating {
+    position: absolute;
     box-shadow: 0 5px 15px rgba(0, 0, 0, 0.2);
     opacity: 0.9;
     z-index: 1000;
 }
 
 .visualization-panel.resizing {
+    position: absolute;
     opacity: 0.9;
     z-index: 1000;
 }
@@ -166,6 +365,30 @@
     user-select: none;
     -webkit-user-select: none;
     touch-action: none;
+}
+
+.title-container {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.float-icon {
+    cursor: pointer;
+    font-size: 16px;
+    color: #666;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    transition: background-color 0.2s;
+}
+
+.float-icon:hover {
+    background-color: #e0e0e0;
+    color: #333;
 }
 
 .panel-title {
@@ -255,32 +478,32 @@
 .resize-n {
     cursor: n-resize;
     height: 8px;
-    left: 10px;
-    right: 10px;
+    left: 0;
+    right: 0;
     top: -4px;
 }
 
 .resize-e {
     cursor: e-resize;
     width: 8px;
-    top: 10px;
-    bottom: 10px;
+    top: 0;
+    bottom: 0;
     right: -4px;
 }
 
 .resize-s {
     cursor: s-resize;
     height: 8px;
-    left: 10px;
-    right: 10px;
+    left: 0;
+    right: 0;
     bottom: -4px;
 }
 
 .resize-w {
     cursor: w-resize;
     width: 8px;
-    top: 10px;
-    bottom: 10px;
+    top: 0;
+    bottom: 0;
     left: -4px;
 }
 

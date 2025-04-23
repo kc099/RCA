@@ -951,35 +951,287 @@ function handleToolResultVisualization(event) {
             panel.appendChild(handle);
         });
         
-        // Add to workspace
+        // Add to workspace (panels are absolute positioned by default)
         outputWorkspace.appendChild(panel);
         
-        // Make the panel initially positioned in center
+        // Position panel in workspace - panels are positioned absolutely for dragging
         const workspaceRect = outputWorkspace.getBoundingClientRect();
-        const panelWidth = Math.min(600, workspaceRect.width * 0.8);
-        const panelHeight = Math.min(400, workspaceRect.height * 0.8);
         
-        // Set initial position explicitly (important for accurate dragging)
+        // Calculate panel position (initially centered)
+        const panelWidth = Math.min(workspaceRect.width * 0.8, 800);
+        const panelHeight = Math.min(workspaceRect.height * 0.6, 500);
+        
+        // Need to check if there are existing panels to adjust vertical placement
+        const existingPanels = outputWorkspace.querySelectorAll('.visualization-panel');
+        let topPosition = 50; // Starting position 
+        
+        if (existingPanels.length > 1) {
+            // Calculate a position that doesn't directly overlap with other panels
+            // Basic offset strategy - each new panel shifted down and to the right
+            topPosition = (existingPanels.length - 1) * 50;
+        }
+        
+        // Set panel dimensions and position
         panel.style.position = 'absolute';
         panel.style.width = `${panelWidth}px`;
         panel.style.height = `${panelHeight}px`;
-        panel.style.left = `${Math.max(0, (workspaceRect.width - panelWidth) / 2)}px`;
-        panel.style.top = `${Math.max(0, (workspaceRect.height - panelHeight) / 2)}px`;
-        panel.style.transform = 'none'; // Ensure no transform is present
+        panel.style.left = `${Math.max(20, (workspaceRect.width - panelWidth) / 2)}px`;
+        panel.style.top = `${topPosition}px`;
+        panel.style.zIndex = '10';
         
-        // Set z-index to bring it to front
-        panel.style.zIndex = '50';
-        
-        // Setup dragging - much more precise implementation
+        // Setup dragging
         setupDraggablePanel(panel, header);
         
-        // Setup resizing with all handles
+        // Setup resizing
         setupResizablePanel(panel);
+        
+        // Bring panel to front when clicked
+        panel.addEventListener('mousedown', function() {
+            const allPanels = outputWorkspace.querySelectorAll('.visualization-panel');
+            allPanels.forEach(p => p.style.zIndex = '10');
+            panel.style.zIndex = '100';
+        });
         
         return true;
     } catch (error) {
         console.error('Error creating visualization panel:', error);
         return false;
+    }
+}
+
+/**
+ * Setup draggable behavior for visualization panel - more fluid implementation
+ */
+function setupDraggablePanel(panel, dragHandle) {
+    if (!panel || !dragHandle) return;
+    
+    let isDragging = false;
+    let offsetX, offsetY;
+    
+    // Mouse events for desktop
+    dragHandle.addEventListener('mousedown', startDrag);
+    document.addEventListener('mousemove', drag);
+    document.addEventListener('mouseup', stopDrag);
+    
+    // Touch events for mobile
+    dragHandle.addEventListener('touchstart', handleTouchStart);
+    document.addEventListener('touchmove', handleTouchMove);
+    document.addEventListener('touchend', handleTouchEnd);
+    
+    function startDrag(e) {
+        // Don't start drag if clicked on a button
+        if (e.target.closest('.panel-close')) {
+            return;
+        }
+        
+        // Prevent text selection during drag
+        e.preventDefault();
+        e.stopPropagation();
+        
+        // Calculate offset - these values are crucial for smooth dragging
+        const rect = panel.getBoundingClientRect();
+        offsetX = e.clientX - rect.left;
+        offsetY = e.clientY - rect.top;
+        
+        // Bring panel to front
+        const workspace = document.getElementById('output-workspace');
+        const allPanels = workspace.querySelectorAll('.visualization-panel');
+        allPanels.forEach(p => p.style.zIndex = '10');
+        panel.style.zIndex = '100';
+        
+        isDragging = true;
+        panel.classList.add('dragging');
+    }
+    
+    function drag(e) {
+        if (!isDragging) return;
+        
+        // Get workspace for boundaries
+        const workspace = document.getElementById('output-workspace');
+        const workspaceRect = workspace.getBoundingClientRect();
+        
+        // Calculate new position relative to workspace
+        const x = e.clientX - workspaceRect.left - offsetX;
+        const y = e.clientY - workspaceRect.top - offsetY;
+        
+        // Update position directly
+        panel.style.left = `${x}px`;
+        panel.style.top = `${y}px`;
+        
+        // Ensure workspace scrolls if panel is moved to the edges
+        const scrollMargin = 50;
+        
+        // Handle scrolling down
+        if (e.clientY > workspaceRect.bottom - scrollMargin) {
+            workspace.scrollTop += 10;
+        }
+        
+        // Handle scrolling up
+        if (e.clientY < workspaceRect.top + scrollMargin) {
+            workspace.scrollTop -= 10;
+        }
+    }
+    
+    function stopDrag() {
+        if (!isDragging) return;
+        isDragging = false;
+        panel.classList.remove('dragging');
+    }
+    
+    // Touch event handlers
+    function handleTouchStart(e) {
+        if (e.touches.length === 1) {
+            const touch = e.touches[0];
+            const mouseEvent = new MouseEvent('mousedown', {
+                clientX: touch.clientX,
+                clientY: touch.clientY
+            });
+            startDrag(mouseEvent);
+        }
+    }
+    
+    function handleTouchMove(e) {
+        if (isDragging && e.touches.length === 1) {
+            const touch = e.touches[0];
+            const mouseEvent = new MouseEvent('mousemove', {
+                clientX: touch.clientX,
+                clientY: touch.clientY
+            });
+            drag(mouseEvent);
+        }
+    }
+    
+    function handleTouchEnd() {
+        stopDrag();
+    }
+}
+
+/**
+ * Setup resizable behavior for visualization panel with 8 resize handles
+ */
+function setupResizablePanel(panel) {
+    if (!panel) return;
+    
+    const handles = panel.querySelectorAll('.resize-handle');
+    if (!handles.length) return;
+    
+    handles.forEach(handle => {
+        handle.addEventListener('mousedown', startResize);
+        handle.addEventListener('touchstart', handleTouchStart);
+    });
+    
+    document.addEventListener('mousemove', resize);
+    document.addEventListener('mouseup', stopResize);
+    document.addEventListener('touchmove', handleTouchMove);
+    document.addEventListener('touchend', handleTouchEnd);
+    
+    let isResizing = false;
+    let currentHandle = null;
+    let startX, startY, startWidth, startHeight, startLeft, startTop;
+    
+    function startResize(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        
+        // Bring panel to front
+        const workspace = document.getElementById('output-workspace');
+        const allPanels = workspace.querySelectorAll('.visualization-panel');
+        allPanels.forEach(p => p.style.zIndex = '10');
+        panel.style.zIndex = '100';
+        
+        isResizing = true;
+        currentHandle = e.target;
+        panel.classList.add('resizing');
+        
+        // Save starting dimensions and position
+        startWidth = panel.offsetWidth;
+        startHeight = panel.offsetHeight;
+        startLeft = panel.offsetLeft;
+        startTop = panel.offsetTop;
+        startX = e.clientX;
+        startY = e.clientY;
+    }
+    
+    function resize(e) {
+        if (!isResizing) return;
+        
+        const direction = currentHandle.dataset.direction;
+        const deltaX = e.clientX - startX;
+        const deltaY = e.clientY - startY;
+        
+        // Handle different resize directions
+        if (direction.includes('e')) {
+            // East - resize width
+            panel.style.width = `${Math.max(200, startWidth + deltaX)}px`;
+        }
+        if (direction.includes('w')) {
+            // West - resize width and reposition
+            const newWidth = Math.max(200, startWidth - deltaX);
+            const newLeft = startLeft + (startWidth - newWidth);
+            panel.style.width = `${newWidth}px`;
+            panel.style.left = `${newLeft}px`;
+        }
+        if (direction.includes('s')) {
+            // South - resize height
+            panel.style.height = `${Math.max(150, startHeight + deltaY)}px`;
+        }
+        if (direction.includes('n')) {
+            // North - resize height and reposition
+            const newHeight = Math.max(150, startHeight - deltaY);
+            const newTop = startTop + (startHeight - newHeight);
+            panel.style.height = `${newHeight}px`;
+            panel.style.top = `${newTop}px`;
+        }
+        
+        // Ensure workspace scrolls if resizing to the edges
+        const workspace = document.getElementById('output-workspace');
+        const workspaceRect = workspace.getBoundingClientRect();
+        const scrollMargin = 50;
+        
+        // Handle scrolling down
+        if (e.clientY > workspaceRect.bottom - scrollMargin) {
+            workspace.scrollTop += 10;
+        }
+        
+        // Handle scrolling up
+        if (e.clientY < workspaceRect.top + scrollMargin) {
+            workspace.scrollTop -= 10;
+        }
+    }
+    
+    function stopResize() {
+        if (!isResizing) return;
+        
+        isResizing = false;
+        panel.classList.remove('resizing');
+        currentHandle = null;
+    }
+    
+    // Touch event handlers
+    function handleTouchStart(e) {
+        if (e.touches.length === 1) {
+            const touch = e.touches[0];
+            const mouseEvent = new MouseEvent('mousedown', {
+                clientX: touch.clientX,
+                clientY: touch.clientY
+            });
+            startResize(mouseEvent);
+        }
+    }
+    
+    function handleTouchMove(e) {
+        if (isResizing && e.touches.length === 1) {
+            const touch = e.touches[0];
+            const mouseEvent = new MouseEvent('mousemove', {
+                clientX: touch.clientX,
+                clientY: touch.clientY
+            });
+            resize(mouseEvent);
+        }
+    }
+    
+    function handleTouchEnd() {
+        stopResize();
     }
 }
 
@@ -1051,225 +1303,6 @@ function convertAsciiTableToHtml(asciiTable) {
     } catch (error) {
         console.error('Error converting ASCII table to HTML:', error);
         return `<pre>${asciiTable}</pre>`;
-    }
-}
-
-/**
- * Setup draggable behavior for visualization panel - more fluid implementation
- */
-function setupDraggablePanel(panel, dragHandle) {
-    if (!panel || !dragHandle) return;
-    
-    let isDragging = false;
-    let offsetX, offsetY;
-    let originalTransform;
-    
-    // Mouse events for desktop
-    dragHandle.addEventListener('mousedown', startDrag);
-    document.addEventListener('mousemove', drag);
-    document.addEventListener('mouseup', stopDrag);
-    
-    // Touch events for mobile
-    dragHandle.addEventListener('touchstart', handleTouchStart);
-    document.addEventListener('touchmove', handleTouchMove);
-    document.addEventListener('touchend', handleTouchEnd);
-    
-    function startDrag(e) {
-        // Prevent text selection during drag
-        e.preventDefault();
-        e.stopPropagation();
-        
-        isDragging = true;
-        panel.classList.add('dragging');
-        
-        // Save original transform if any
-        originalTransform = window.getComputedStyle(panel).transform;
-        if (originalTransform === 'none') {
-            originalTransform = '';
-        }
-        
-        // Calculate offset relative to the panel
-        const panelRect = panel.getBoundingClientRect();
-        const workspaceRect = document.getElementById('output-workspace').getBoundingClientRect();
-        
-        // Account for both panel position and workspace position
-        offsetX = e.clientX - panelRect.left;
-        offsetY = e.clientY - panelRect.top;
-    }
-    
-    function drag(e) {
-        if (!isDragging) return;
-        
-        // Calculate new position
-        const workspaceRect = document.getElementById('output-workspace').getBoundingClientRect();
-        
-        // Calculate position relative to workspace
-        let x = e.clientX - workspaceRect.left - offsetX;
-        let y = e.clientY - workspaceRect.top - offsetY;
-        
-        // Keep within bounds
-        x = Math.max(0, Math.min(x, workspaceRect.width - panel.offsetWidth));
-        y = Math.max(0, Math.min(y, workspaceRect.height - panel.offsetHeight));
-        
-        // Set position directly instead of using transform for more accuracy
-        panel.style.left = `${x}px`;
-        panel.style.top = `${y}px`;
-    }
-    
-    function stopDrag() {
-        if (!isDragging) return;
-        
-        isDragging = false;
-        panel.classList.remove('dragging');
-        originalTransform = '';
-    }
-    
-    // Touch event handlers
-    function handleTouchStart(e) {
-        if (e.touches.length === 1) {
-            const touch = e.touches[0];
-            const mouseEvent = new MouseEvent('mousedown', {
-                clientX: touch.clientX,
-                clientY: touch.clientY
-            });
-            startDrag(mouseEvent);
-        }
-    }
-    
-    function handleTouchMove(e) {
-        if (isDragging && e.touches.length === 1) {
-            const touch = e.touches[0];
-            const mouseEvent = new MouseEvent('mousemove', {
-                clientX: touch.clientX,
-                clientY: touch.clientY
-            });
-            drag(mouseEvent);
-        }
-    }
-    
-    function handleTouchEnd() {
-        stopDrag();
-    }
-}
-
-/**
- * Setup resizable behavior for visualization panel with 8 resize handles
- */
-function setupResizablePanel(panel) {
-    if (!panel) return;
-    
-    const handles = panel.querySelectorAll('.resize-handle');
-    if (!handles.length) return;
-    
-    handles.forEach(handle => {
-        handle.addEventListener('mousedown', startResize);
-        handle.addEventListener('touchstart', handleTouchStart);
-    });
-    
-    document.addEventListener('mousemove', resize);
-    document.addEventListener('mouseup', stopResize);
-    document.addEventListener('touchmove', handleTouchMove);
-    document.addEventListener('touchend', handleTouchEnd);
-    
-    let isResizing = false;
-    let currentHandle = null;
-    let startX, startY, startWidth, startHeight, startLeft, startTop;
-    
-    function startResize(e) {
-        e.preventDefault();
-        e.stopPropagation();
-        
-        isResizing = true;
-        currentHandle = e.target;
-        panel.classList.add('resizing');
-        
-        startX = e.clientX;
-        startY = e.clientY;
-        startWidth = panel.offsetWidth;
-        startHeight = panel.offsetHeight;
-        startLeft = panel.offsetLeft;
-        startTop = panel.offsetTop;
-    }
-    
-    function resize(e) {
-        if (!isResizing) return;
-        
-        const direction = currentHandle.dataset.direction;
-        const deltaX = e.clientX - startX;
-        const deltaY = e.clientY - startY;
-        
-        const workspace = document.getElementById('output-workspace');
-        if (!workspace) return;
-        
-        const workspaceRect = workspace.getBoundingClientRect();
-        
-        let newWidth = startWidth;
-        let newHeight = startHeight;
-        let newLeft = startLeft;
-        let newTop = startTop;
-        
-        // Handle different resize directions
-        if (direction.includes('e')) {
-            newWidth = Math.max(200, startWidth + deltaX);
-            newWidth = Math.min(newWidth, workspaceRect.width - startLeft);
-        }
-        if (direction.includes('w')) {
-            const maxLeftDelta = Math.min(startWidth - 200, startLeft);
-            const leftDelta = Math.max(-maxLeftDelta, Math.min(deltaX, startWidth - 200));
-            newLeft = startLeft + leftDelta;
-            newWidth = startWidth - leftDelta;
-        }
-        if (direction.includes('s')) {
-            newHeight = Math.max(150, startHeight + deltaY);
-            newHeight = Math.min(newHeight, workspaceRect.height - startTop);
-        }
-        if (direction.includes('n')) {
-            const maxTopDelta = Math.min(startHeight - 150, startTop);
-            const topDelta = Math.max(-maxTopDelta, Math.min(deltaY, startHeight - 150));
-            newTop = startTop + topDelta;
-            newHeight = startHeight - topDelta;
-        }
-        
-        // Apply new dimensions and position
-        panel.style.width = `${newWidth}px`;
-        panel.style.height = `${newHeight}px`;
-        panel.style.left = `${newLeft}px`;
-        panel.style.top = `${newTop}px`;
-    }
-    
-    function stopResize() {
-        if (!isResizing) return;
-        
-        isResizing = false;
-        panel.classList.remove('resizing');
-        currentHandle = null;
-    }
-    
-    // Touch event handlers
-    function handleTouchStart(e) {
-        if (e.touches.length === 1) {
-            const touch = e.touches[0];
-            const mouseEvent = new MouseEvent('mousedown', {
-                clientX: touch.clientX,
-                clientY: touch.clientY
-            });
-            startResize(mouseEvent);
-        }
-    }
-    
-    function handleTouchMove(e) {
-        if (isResizing && e.touches.length === 1) {
-            const touch = e.touches[0];
-            const mouseEvent = new MouseEvent('mousemove', {
-                clientX: touch.clientX,
-                clientY: touch.clientY
-            });
-            resize(mouseEvent);
-        }
-    }
-    
-    function handleTouchEnd() {
-        stopResize();
     }
 }
 
