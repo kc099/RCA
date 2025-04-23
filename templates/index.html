@@ -5,8 +5,10 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>RCA Local Version</title>
-    <link rel="stylesheet" href="/static/style.css">
-    <link rel="stylesheet" href="/static/auth.css">
+    <link rel="stylesheet" href="/static/style.css?v={{ cache_version }}">
+    <link rel="stylesheet" href="/static/auth.css?v={{ cache_version }}">
+    <link rel="stylesheet" href="/static/user-menu.css?v={{ cache_version }}">
+    <link rel="stylesheet" href="/static/css/chat.css?v={{ cache_version }}">
 </head>
 
 <body>
@@ -20,51 +22,44 @@
                 <button id="config-button" class="config-button" title="Configuration Settings">Configuration
                     Setting</button>
                 <div class="user-menu" id="user-menu">
-                    <div class="user-profile">
+                    <div class="user-profile" onclick="toggleUserMenu()">
                         <div class="user-avatar" id="user-avatar"></div>
                         <span class="username-display" id="username-display"></span>
                     </div>
-                    <div class="user-menu-dropdown">
+                    <div class="user-menu-dropdown" id="user-dropdown">
                         <div class="user-menu-item profile">My Profile</div>
-                        <div class="user-menu-item logout" onclick="logout()">Logout</div>
+                        <div class="user-menu-item logout" onclick="directLogout()">Logout</div>
                     </div>
                 </div>
             </div>
         </div>
 
         <div class="content-container">
-            <!-- Left chat panel -->
-            <div class="chat-panel" id="chat-panel">
-                <div class="chat-header">
-                    <h2>Chat</h2>
-                </div>
-                <!-- Removed the History Tasks panel as requested -->
-                <div id="task-container" class="task-container">
-                    <div class="welcome-message">
-                        <h2></h2>
-                        <p></p>
+            <!-- Main chat container with proper layout -->
+            <div class="chat-container">
+                <!-- Left chat panel (max 40% width) -->
+                <div class="chat-panel" id="chat-panel">
+                    <div class="chat-header">
+                        <h2>Chat</h2>
                     </div>
-                    <div id="log-container" class="step-container"></div>
+                    <div id="task-container" class="task-container">
+                        <div class="welcome-message">
+                            <h2></h2>
+                            <p></p>
+                        </div>
+                        <div id="log-container" class="step-container"></div>
+                    </div>
+                    <div id="input-container" class="input-container">
+                        <input type="text" id="prompt-input" placeholder="Enter task prompt..."
+                            onkeypress="if(event.keyCode === 13) createTask()">
+                        <button onclick="createTask()">Send</button>
+                    </div>
                 </div>
-                <div id="input-container" class="input-container">
-                    <input type="text" id="prompt-input" placeholder="Enter task prompt..."
-                        onkeypress="if(event.keyCode === 13) createTask()">
-                    <button onclick="createTask()">Send</button>
-                </div>
-            </div>
 
-            <!-- Resize handle -->
-            <div class="panel-resize-handle" id="panel-resize-handle"></div>
-
-            <!-- Right visualization panel -->
-            <div class="visualization-panel">
-                <div class="visualization-header">
-                    <h2>Visualization Panel</h2>
-                </div>
-                <div id="output-workspace" class="output-workspace">
-                    <div class="empty-output">
-                        <p>No visualizations or data to display</p>
-                        <p>Use the chat to get started</p>
+                <!-- Right visualization container (min 60% width) -->
+                <div class="visualization-container">
+                    <div id="output-workspace">
+                        <!-- Visualization panels will be added here dynamically -->
                     </div>
                 </div>
             </div>
@@ -139,8 +134,169 @@
 
     <!-- Load scripts -->
     <script src="/static/auth.js?v={{ cache_version }}"></script>
+    
+    <!-- Main wrapper (load FIRST to establish framework) -->
     <script src="/static/main.js?v={{ cache_version }}"></script>
+    
+    <!-- Core modules -->
+    <script src="/static/js/core/utils.js?v={{ cache_version }}"></script>
+    <script src="/static/js/core/events.js?v={{ cache_version }}"></script>
+    <script src="/static/js/core/tasks.js?v={{ cache_version }}"></script>
+    <script src="/static/js/core/ui.js?v={{ cache_version }}"></script>
+    <script src="/static/js/core/dashboard-loader.js?v={{ cache_version }}"></script>
+    
+    <!-- Dashboard modules -->
+    <script src="/static/js/dashboard-data.js?v={{ cache_version }}"></script>
+    <script src="/static/js/dashboard-charts.js?v={{ cache_version }}"></script>
+    <script src="/static/js/dashboard-init.js?v={{ cache_version }}"></script>
+    
+    <!-- Core orchestrator (load LAST) -->
+    <script src="/static/js/core/main.js?v={{ cache_version }}"></script>
+    
     <script src="/static/i18n.js?v={{ cache_version }}"></script>
+    
+    <!-- Direct script to ensure UI elements work properly -->
+    <script>
+        // Execute after page load
+        document.addEventListener('DOMContentLoaded', function() {
+            console.log('Direct script executing');
+            
+            // Display username in the avatar and dropdown
+            function updateUserDisplay() {
+                // Force retrieve token directly from sessionStorage
+                const token = window.sessionStorage.getItem('authToken');
+                console.log('Token retrieved:', token ? 'Token exists' : 'No token found');
+                
+                const usernameDisplay = document.getElementById('username-display');
+                const userAvatar = document.getElementById('user-avatar');
+                
+                // Check if we're logged in from a direct check
+                fetch('/auth/validate-token', {
+                    method: 'GET',
+                    headers: {
+                        'Authorization': 'Bearer ' + token
+                    }
+                })
+                .then(response => {
+                    if (response.ok) {
+                        return response.json();
+                    } else {
+                        throw new Error('Token validation failed');
+                    }
+                })
+                .then(data => {
+                    console.log('User validation data:', data);
+                    
+                    if (data.valid === true || data.username) {
+                        const username = data.username || 'User';
+                        console.log('User authenticated as:', username);
+                        
+                        // Update avatar with first letter
+                        if (userAvatar) {
+                            userAvatar.textContent = username.charAt(0).toUpperCase();
+                            // Make sure avatar is visible and styled
+                            userAvatar.style.display = 'flex';
+                        }
+                        
+                        // Hide username text display per user preference
+                        if (usernameDisplay) {
+                            usernameDisplay.style.display = 'none';
+                        }
+                    } else {
+                        // Not valid token
+                        if (userAvatar) {
+                            userAvatar.textContent = 'G';
+                        }
+                        
+                        // Hide username text display per user preference
+                        if (usernameDisplay) {
+                            usernameDisplay.style.display = 'none';
+                        }
+                    }
+                })
+                .catch(error => {
+                    console.error('Error checking token validity:', error);
+                    // Default to G for guest
+                    if (userAvatar) {
+                        userAvatar.textContent = 'G';
+                    }
+                    
+                    // Hide username text display per user preference
+                    if (usernameDisplay) {
+                        usernameDisplay.style.display = 'none';
+                    }
+                });
+            }
+            
+            // Run immediately to update user info
+            updateUserDisplay();
+            
+            // Set up config button
+            var configButton = document.getElementById('config-button');
+            var configModal = document.getElementById('config-modal');
+            
+            if (configButton && configModal) {
+                configButton.onclick = function() {
+                    console.log('Config button clicked directly');
+                    configModal.style.display = 'block';
+                };
+                
+                // Setup close button
+                var closeButton = configModal.querySelector('.close-modal');
+                if (closeButton) {
+                    closeButton.onclick = function() {
+                        configModal.style.display = 'none';
+                    };
+                }
+                
+                // Setup cancel button
+                var cancelButton = document.getElementById('cancel-config-btn');
+                if (cancelButton) {
+                    cancelButton.onclick = function() {
+                        configModal.style.display = 'none';
+                    };
+                }
+            }
+            
+            // Toggle user menu function
+            window.toggleUserMenu = function() {
+                console.log('Toggle user menu called');
+                var dropdown = document.getElementById('user-dropdown');
+                if (!dropdown) {
+                    console.error('User dropdown not found');
+                    return;
+                }
+                
+                // Toggle active class
+                dropdown.classList.toggle('active');
+                
+                // Force visibility with inline styles
+                if (dropdown.classList.contains('active')) {
+                    dropdown.style.display = 'block';
+                    dropdown.style.visibility = 'visible';
+                    dropdown.style.opacity = '1';
+                    dropdown.style.zIndex = '1001';
+                } else {
+                    dropdown.style.display = '';
+                    dropdown.style.visibility = '';
+                    dropdown.style.opacity = '';
+                    dropdown.style.zIndex = '';
+                }
+            };
+            
+            // Direct logout function
+            window.directLogout = function() {
+                console.log('Logout function called');
+                // Clear auth token
+                sessionStorage.removeItem('authToken');
+                
+                // Redirect to login page with correct URL
+                window.location.href = '/login';
+            };
+            
+            console.log('Direct script completed');
+        });
+    </script>
 </body>
 
 </html>

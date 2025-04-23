@@ -78,11 +78,8 @@ document.addEventListener('DOMContentLoaded', () => {
                     throw new Error(data.detail || 'Login failed. Please check your credentials.');
                 }
                 
-                // Store token in localStorage
-                authLog('Login successful, storing token');
-                localStorage.setItem('auth_token', data.access_token);
-                localStorage.setItem('token_expires', data.expires_at);
-                localStorage.setItem('username', username);
+                // Store token in both localStorage and sessionStorage for redundancy
+                setAuthToken(data.access_token, data.expires_at, username);
                 
                 // Log token expiration info
                 const expiresAt = data.expires_at;
@@ -177,10 +174,52 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 });
 
+// Function to set auth token
+function setAuthToken(token, expiresAt, username) {
+    if (!token || !expiresAt) {
+        authLog('Invalid token data provided', { token: !!token, expiresAt: !!expiresAt });
+        return false;
+    }
+    
+    try {
+        // Store token in both localStorage and sessionStorage for redundancy
+        localStorage.setItem('auth_token', token);
+        localStorage.setItem('token_expires', expiresAt);
+        localStorage.setItem('username', username || 'User');
+        
+        // Also store in sessionStorage for components that use that
+        sessionStorage.setItem('authToken', token);
+        sessionStorage.setItem('tokenExpires', expiresAt);
+        sessionStorage.setItem('username', username || 'User');
+        
+        authLog('Auth token set successfully', { expiresAt: new Date(expiresAt * 1000).toLocaleString() });
+        return true;
+    } catch (error) {
+        authLog('Error setting auth token', error);
+        return false;
+    }
+}
+
 // Function to check if token is valid and needs refreshing
 async function checkAndRefreshToken() {
-    const token = localStorage.getItem('auth_token');
-    const expires = localStorage.getItem('token_expires');
+    let token = sessionStorage.getItem('authToken');
+    let expires = sessionStorage.getItem('tokenExpires');
+    
+    // Fall back to localStorage if not found in sessionStorage
+    if (!token || !expires) {
+        token = localStorage.getItem('auth_token');
+        expires = localStorage.getItem('token_expires');
+        
+        // If found in localStorage but not sessionStorage, sync them
+        if (token && expires) {
+            sessionStorage.setItem('authToken', token);
+            sessionStorage.setItem('tokenExpires', expires);
+            const username = localStorage.getItem('username');
+            if (username) {
+                sessionStorage.setItem('username', username);
+            }
+        }
+    }
     
     if (!token || !expires) {
         authLog('No token found or missing expiration');
@@ -239,9 +278,15 @@ async function checkAndRefreshToken() {
 // Function to logout
 function logout(expired = false) {
     authLog('Logging out user', expired ? 'Token expired' : 'User initiated');
+    
+    // Clear from both localStorage and sessionStorage
     localStorage.removeItem('auth_token');
     localStorage.removeItem('token_expires');
     localStorage.removeItem('username');
+    
+    sessionStorage.removeItem('authToken');
+    sessionStorage.removeItem('tokenExpires');
+    sessionStorage.removeItem('username');
     
     if (expired) {
         window.location.href = '/login?session_expired=true';
@@ -252,9 +297,27 @@ function logout(expired = false) {
 
 // Function to check if user is authenticated
 function isAuthenticated() {
-    const token = localStorage.getItem('auth_token');
-    const expires = localStorage.getItem('token_expires');
+    // Try sessionStorage first (for components that use it)
+    let token = sessionStorage.getItem('authToken');
+    let expires = sessionStorage.getItem('tokenExpires');
     
+    // Fall back to localStorage if not found in sessionStorage
+    if (!token || !expires) {
+        token = localStorage.getItem('auth_token');
+        expires = localStorage.getItem('token_expires');
+        
+        // If found in localStorage but not sessionStorage, sync them
+        if (token && expires) {
+            sessionStorage.setItem('authToken', token);
+            sessionStorage.setItem('tokenExpires', expires);
+            const username = localStorage.getItem('username');
+            if (username) {
+                sessionStorage.setItem('username', username);
+            }
+        }
+    }
+    
+    // If token is still not found, user is not authenticated
     if (!token || !expires) {
         authLog('No token found or missing expiration');
         return false;
@@ -267,14 +330,48 @@ function isAuthenticated() {
     if (now >= expiresAt) {
         // Token expired, clean up
         authLog('Token expired', { now, expiresAt });
-        localStorage.removeItem('auth_token');
-        localStorage.removeItem('token_expires');
-        localStorage.removeItem('username');
+        logout(true);
         return false;
     }
     
     authLog('User is authenticated, token valid until', new Date(expiresAt * 1000).toLocaleString());
     return true;
+}
+
+// Direct toggle function for user menu dropdown
+function toggleUserMenu() {
+    console.log('Toggle user menu called directly');
+    const dropdown = document.getElementById('user-dropdown');
+    if (!dropdown) {
+        console.error('User dropdown not found');
+        return;
+    }
+    
+    // Toggle active class
+    dropdown.classList.toggle('active');
+    
+    // Force visibility with inline styles
+    if (dropdown.classList.contains('active')) {
+        dropdown.style.display = 'block';
+        dropdown.style.visibility = 'visible';
+        dropdown.style.opacity = '1';
+        dropdown.style.zIndex = '1000';
+    } else {
+        dropdown.style.display = '';
+        dropdown.style.visibility = '';
+        dropdown.style.opacity = '';
+        dropdown.style.zIndex = '';
+    }
+}
+
+// Direct logout function
+function directLogout() {
+    console.log('Logout function called directly');
+    // Clear auth token
+    sessionStorage.removeItem('authToken');
+    
+    // Redirect to login page with correct URL
+    window.location.href = '/login';
 }
 
 // Add auth token to all fetch requests
@@ -287,7 +384,7 @@ if (typeof window.originalFetch === 'undefined') {
             !url.includes('/auth/token') && 
             !url.includes('/auth/log')) {
             
-            const token = localStorage.getItem('auth_token');
+            const token = sessionStorage.getItem('authToken');
             
             if (token) {
                 options.headers = {
