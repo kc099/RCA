@@ -51,8 +51,12 @@ class DashboardVizTool(BaseTool):
                     "description": "Title for the visualization"
                 },
                 "data": {
-                    "type": "string",
-                    "description": "JSON or CSV data to visualize (as a string)"
+                    "oneOf": [
+                        {"type": "string", "description": "JSON or CSV data to visualize (as a string)"},
+                        {"type": "array", "description": "Data as a list of objects"},
+                        {"type": "object", "description": "Data as a single object"}
+                    ],
+                    "description": "Data to visualize (as a string, list, or object)"
                 },
                 "data_file": {
                     "type": "string",
@@ -222,11 +226,11 @@ class DashboardVizTool(BaseTool):
                 chart_config["labels"] = [item.get(category_field) for item in data]
                 chart_config["values"] = [item.get(value_field) for item in data]
             
-            # Create the result
-            result = {
-                "visualization_type": "chart",
-                "output": chart_config
-            }
+            # Create the result - using ToolResult to ensure consistent format with visualization_type
+            result = ToolResult(
+                output=chart_config,
+                visualization_type="chart"
+            ).dict()
             
             return result
         except Exception as e:
@@ -237,32 +241,33 @@ class DashboardVizTool(BaseTool):
         """Create a dashboard with multiple charts."""
         try:
             title = kwargs.get("title", "Dashboard")
+            
+            # Get chart configurations 
             charts = kwargs.get("charts", [])
             
-            # If charts are provided directly, use them
-            if charts:
-                dashboard_config = {
-                    "title": title,
-                    "charts": charts
-                }
-            else:
-                # Otherwise, try to create charts from data
+            if not charts:
+                # If no charts are specified, try to auto-generate from data
                 data = await self._get_data(kwargs)
                 if not data:
-                    return ToolResult(error="No data provided. Use either 'data', 'data_file', or 'charts' parameter.").dict()
+                    return ToolResult(error="No data provided and no chart configurations specified.").dict()
                 
-                # Auto-generate charts based on data
+                # Auto-generate appropriate charts based on data
                 charts = await self._auto_generate_charts(data, title)
-                dashboard_config = {
-                    "title": title,
-                    "charts": charts
-                }
+                
+                if not charts:
+                    return ToolResult(error="Could not auto-generate charts from the provided data.").dict()
             
-            # Create the result
-            result = {
-                "visualization_type": "dashboard",
-                "output": dashboard_config
+            # Create dashboard configuration
+            dashboard_config = {
+                "title": title,
+                "charts": charts
             }
+            
+            # Return the result
+            result = ToolResult(
+                output=dashboard_config,
+                visualization_type="dashboard"
+            ).dict()
             
             return result
         except Exception as e:
@@ -292,29 +297,27 @@ class DashboardVizTool(BaseTool):
     async def _visualize_json(self, **kwargs) -> Dict[str, Any]:
         """Create visualizations from JSON data."""
         try:
-            data_str = kwargs.get("data")
-            data_file = kwargs.get("data_file")
+            title = kwargs.get("title", "JSON Visualization")
             
-            if data_str:
-                data = json.loads(data_str)
-            elif data_file:
-                with open(data_file, 'r') as f:
-                    data = json.load(f)
-            else:
+            # Get data from either direct data or file
+            data = await self._get_data(kwargs)
+            if not data:
                 return ToolResult(error="No data provided. Use either 'data' or 'data_file' parameter.").dict()
             
-            # Create dashboard with auto-generated charts
-            title = kwargs.get("title", "JSON Data Visualization")
+            # Auto-generate appropriate charts based on data
             charts = await self._auto_generate_charts(data, title)
             
-            # Create the result
-            result = {
-                "visualization_type": "dashboard",
-                "output": {
+            if not charts:
+                return ToolResult(error="Could not generate visualizations from the provided JSON data.").dict()
+            
+            # Create result
+            result = ToolResult(
+                output={
                     "title": title,
                     "charts": charts
-                }
-            }
+                },
+                visualization_type="dashboard"
+            ).dict()
             
             return result
         except Exception as e:
@@ -324,36 +327,30 @@ class DashboardVizTool(BaseTool):
     async def _visualize_csv(self, **kwargs) -> Dict[str, Any]:
         """Create visualizations from CSV data."""
         try:
-            data_str = kwargs.get("data")
-            data_file = kwargs.get("data_file")
+            title = kwargs.get("title", "CSV Visualization")
             
-            if data_str:
-                # Parse CSV string
-                reader = csv.DictReader(data_str.splitlines())
-                data = list(reader)
-            elif data_file:
-                # Read CSV file
-                with open(data_file, 'r') as f:
-                    reader = csv.DictReader(f)
-                    data = list(reader)
-            else:
+            # Get data 
+            data = await self._get_data(kwargs)
+            if not data:
                 return ToolResult(error="No data provided. Use either 'data' or 'data_file' parameter.").dict()
             
-            # Convert string numeric values to numbers
+            # Convert any string numeric values to actual numbers
             data = self._convert_numeric_values(data)
             
-            # Create dashboard with auto-generated charts
-            title = kwargs.get("title", "CSV Data Visualization")
+            # Auto-generate appropriate charts based on data
             charts = await self._auto_generate_charts(data, title)
             
-            # Create the result
-            result = {
-                "visualization_type": "dashboard",
-                "output": {
+            if not charts:
+                return ToolResult(error="Could not generate visualizations from the provided CSV data.").dict()
+            
+            # Create result
+            result = ToolResult(
+                output={
                     "title": title,
                     "charts": charts
-                }
-            }
+                },
+                visualization_type="dashboard"
+            ).dict()
             
             return result
         except Exception as e:
@@ -363,13 +360,19 @@ class DashboardVizTool(BaseTool):
     async def _get_data(self, kwargs) -> List[Dict]:
         """Get data from provided parameters, either direct data or from a file."""
         try:
-            data_str = kwargs.get("data")
+            data_input = kwargs.get("data")
             data_file = kwargs.get("data_file")
             
-            if data_str:
-                # Try parsing as JSON first
+            if data_input:
+                # First check if it's already a Python object (list or dict)
+                if isinstance(data_input, list):
+                    return data_input
+                elif isinstance(data_input, dict):
+                    return [data_input]
+                
+                # Otherwise, treat it as a string and try to parse
                 try:
-                    data = json.loads(data_str)
+                    data = json.loads(data_input)
                     if isinstance(data, list):
                         return data
                     elif isinstance(data, dict):
@@ -378,7 +381,7 @@ class DashboardVizTool(BaseTool):
                 except json.JSONDecodeError:
                     # Try parsing as CSV
                     try:
-                        reader = csv.DictReader(data_str.splitlines())
+                        reader = csv.DictReader(data_input.splitlines())
                         data = list(reader)
                         return self._convert_numeric_values(data)
                     except Exception as csv_error:

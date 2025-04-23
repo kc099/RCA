@@ -43,7 +43,7 @@ from app.tool.terminate import Terminate
 from app.tool.db_utils import patch_aiomysql_connection, patch_asyncpg_connection
 from app.resource.postgres_data import PostgreSQLResource
 from app.tool.file_saver import FileSaver
-from app.tool.image_gen_tool import ImageGenTool
+from app.tool.dashboard_viz import DashboardVizTool
 
 # Patch database connections to handle event loop closed errors
 patch_aiomysql_connection()
@@ -101,7 +101,7 @@ class MCPServer:
         self.tools["mysql_rw"] = MySQLRWTool()
         self.tools["terminate"] = Terminate()
         self.tools["file_saver"] = FileSaver()
-        self.tools["image_gen_tool"] = ImageGenTool()
+        self.tools["dashboard_viz"] = DashboardVizTool()
 
     def register_tool(self, tool: BaseTool, method_name: Optional[str] = None) -> None:
         """Register a tool with parameter validation and documentation."""
@@ -287,7 +287,7 @@ class MCPServer:
         string_tool = StrReplaceEditor()
         file_saver_tool = FileSaver()
         ask_human_tool = AskHuman()
-        image_gen_tool = ImageGenTool()
+        dashboard_viz_tool = DashboardVizTool()
 
         # Register tools with the agent
         self.register_tool(browser_use_tool)
@@ -297,7 +297,7 @@ class MCPServer:
         self.register_tool(string_tool)
         self.register_tool(file_saver_tool)
         #self.register_tool(ask_human_tool)
-        self.register_tool(image_gen_tool)
+        self.register_tool(dashboard_viz_tool)
 
         # Initialize MySQL read/write tool with remote connection parameters
         await mysql_rw_tool.initialize(

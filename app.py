@@ -248,14 +248,48 @@ task_manager = TaskManager()
 
 # Create a helper function to check and enhance tool results
 def enhance_tool_result(result):
-    """Add visualization type for tool results that look like tables"""
+    """Add visualization type for tool results that look like tables or charts"""
     if isinstance(result, dict) and 'output' in result:
         output = result['output']
+        
+        # First, check if result already has a visualization_type
+        if 'visualization_type' in result:
+            return result
+            
         # Check if output looks like a table (has pipe characters and plus signs)
         if isinstance(output, str) and '|' in output and '+' in output:
             # This looks like a table output from a database query
-            if 'visualization_type' not in result:
-                result['visualization_type'] = 'table'
+            result['visualization_type'] = 'table'
+            return result
+            
+        # Check if output looks like chart data from dashboard_viz tool
+        if isinstance(output, dict):
+            # If output has chart-related keys like 'type', 'x', 'y', etc.
+            chart_indicators = ['type', 'title', 'x', 'y', 'xaxis', 'yaxis', 'labels', 'values']
+            if any(key in output for key in chart_indicators):
+                result['visualization_type'] = 'chart'
+                return result
+                
+        # Check for dashboard data (multiple charts)
+        if isinstance(output, dict) and 'charts' in output and isinstance(output['charts'], list):
+            result['visualization_type'] = 'dashboard'
+            return result
+            
+    # Check for JSON string results that might be from dashboard_viz tool
+    if isinstance(result, str):
+        try:
+            # Try to parse as JSON
+            parsed = json.loads(result)
+            if isinstance(parsed, dict):
+                # Check for visualization_type in the parsed result
+                if 'visualization_type' in parsed:
+                    return parsed
+                # Check if it has output field with chart data
+                if 'output' in parsed:
+                    return enhance_tool_result(parsed)  # Recursively check the parsed output
+        except json.JSONDecodeError:
+            pass
+            
     return result
 
 
@@ -388,6 +422,42 @@ async def process_task(task_id: str, prompt: str, user: UserInDB):
                                     })
                             except Exception as e:
                                 logger.error(f"Error processing database result: {e}")
+                        
+                        # Process tool results for dashboard visualizations
+                        elif "dashboard_viz" in cleaned_message and "executed:" in cleaned_message:
+                            try:
+                                # Extract JSON tool result data
+                                output_match = re.search(r'executed:\s*(\{.*\})', cleaned_message)
+                                if output_match:
+                                    tool_output_str = output_match.group(1).strip()
+                                    tool_data = json.loads(tool_output_str)
+                                    
+                                    # Enhance with visualization type
+                                    enhanced_result = enhance_tool_result(tool_data)
+                                    
+                                    # Determine visualization type from the result
+                                    viz_type = "chart"  # Default to chart
+                                    if "visualization_type" in enhanced_result:
+                                        viz_type = enhanced_result["visualization_type"]
+                                    elif isinstance(enhanced_result.get("output"), dict):
+                                        output_obj = enhanced_result["output"]
+                                        if "charts" in output_obj:
+                                            viz_type = "dashboard"
+                                    
+                                    # Send as a result event for UI display
+                                    await task_manager.queues[self.task_id].put({
+                                        "type": "result",
+                                        "step": 0,
+                                        "content": "Data visualization:",
+                                        "result": enhanced_result,
+                                        "visualization_type": viz_type,
+                                        "id": enhanced_result.get("id", f"viz-{uuid.uuid4()}"),
+                                        "timestamp": datetime.now().strftime("%H:%M:%S")
+                                    })
+                                    
+                                    logger.info(f"Sent visualization event of type {viz_type} to client")
+                            except Exception as e:
+                                logger.error(f"Error processing dashboard visualization result: {e}")
                     elif "📝 Oops!" in cleaned_message:
                         event_type = "error"
                     elif "🏁 Special tool" in cleaned_message:

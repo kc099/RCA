@@ -867,8 +867,27 @@ function handleToolResultVisualization(event) {
     if (!event || !event.result) return false;
     
     // Check if this is a tool result that should be visualized
-    const visualizationType = event.visualization_type || 
-                            (event.result && event.result.visualization_type);
+    let visualizationType = event.visualization_type || 
+                           (event.result && event.result.visualization_type);
+    
+    // Special handling for dashboard_viz tool results
+    // The dashboard_viz tool embeds visualization_type inside the result object
+    if (!visualizationType && event.result && typeof event.result === 'string') {
+        try {
+            // Try to parse JSON string result
+            const resultObj = JSON.parse(event.result);
+            if (resultObj && resultObj.visualization_type) {
+                visualizationType = resultObj.visualization_type;
+                
+                // Extract the actual chart data from the nested structure
+                if (resultObj.output) {
+                    event.result = resultObj;
+                }
+            }
+        } catch (e) {
+            // Not JSON or couldn't parse, continue with normal processing
+        }
+    }
     
     if (!visualizationType) return false;
     
@@ -882,28 +901,52 @@ function handleToolResultVisualization(event) {
         // Extract table content before creating the panel to validate it
         let tableContent = '';
         let isJsonSchema = false;
+        let chartData = null;
         
-        if (event.result && event.result.output) {
-            tableContent = event.result.output;
-            
-            // Check if this is a JSON schema result
-            if (typeof tableContent === 'string' && tableContent.includes('"COLUMN_NAME"') && 
-                tableContent.includes('"DATA_TYPE"')) {
-                isJsonSchema = true;
+        // Check if this is a chart visualization
+        if (visualizationType === 'chart' || visualizationType === 'dashboard') {
+            // For charts, we extract the chart configuration
+            try {
+                if (event.result && typeof event.result === 'object') {
+                    if (typeof event.result === 'string') {
+                        // If result is a string, try to parse as JSON
+                        chartData = JSON.parse(event.result).output;
+                    } else if (event.result.output) {
+                        // If result already has output field, use that
+                        chartData = event.result.output;
+                    }
+                    
+                    // Valid chart data found
+                    if (chartData) {
+                        console.log('Chart data found:', chartData);
+                    }
+                }
+            } catch (e) {
+                console.error('Error parsing chart data:', e);
             }
-        } else if (typeof event.result === 'string') {
-            tableContent = event.result;
-            
-            // Check if this is a JSON schema result
-            if (tableContent.includes('"COLUMN_NAME"') && tableContent.includes('"DATA_TYPE"')) {
-                isJsonSchema = true;
+        } else {
+            // For tables, extract the content as before
+            if (event.result && event.result.output) {
+                tableContent = event.result.output;
+                
+                // Check if this is a JSON schema result
+                if (typeof tableContent === 'string' && tableContent.includes('"COLUMN_NAME"') && 
+                    tableContent.includes('"DATA_TYPE"')) {
+                    isJsonSchema = true;
+                }
+            } else if (typeof event.result === 'string') {
+                tableContent = event.result;
+                
+                // Check if this is a JSON schema result
+                if (tableContent.includes('"COLUMN_NAME"') && tableContent.includes('"DATA_TYPE"')) {
+                    isJsonSchema = true;
+                }
             }
         }
         
-        // Check if we have valid content - either ASCII table or JSON schema
-        if (!tableContent || 
-            (!isJsonSchema && !(tableContent.includes('|') && tableContent.includes('+')))) {
-            console.log('No valid table content found, skipping visualization');
+        // Check if we have valid content - either chart data, ASCII table, or JSON schema
+        if ((!tableContent || (!isJsonSchema && !(tableContent.includes('|') && tableContent.includes('+')))) && !chartData) {
+            console.log('No valid visualization content found, skipping visualization');
             return false;
         }
         
@@ -942,7 +985,7 @@ function handleToolResultVisualization(event) {
         const content = document.createElement('div');
         content.className = 'panel-content';
         
-        // Handle table visualization
+        // Handle different visualization types
         if (visualizationType === 'table') {
             const tableWrapper = document.createElement('div');
             tableWrapper.className = 'table-wrapper';
@@ -959,6 +1002,60 @@ function handleToolResultVisualization(event) {
             
             tableWrapper.innerHTML = htmlTable;
             content.appendChild(tableWrapper);
+        } else if (visualizationType === 'chart' && chartData) {
+            // Create chart container
+            const chartContainer = document.createElement('div');
+            chartContainer.className = 'chart-wrapper';
+            chartContainer.style.height = '100%';
+            chartContainer.style.width = '100%';
+            
+            // Add a unique ID for Plotly to target
+            const chartId = `chart-${Date.now()}`;
+            chartContainer.id = chartId;
+            
+            content.appendChild(chartContainer);
+            
+            // Set panel title based on chart title if available
+            if (chartData.title && title) {
+                title.textContent = chartData.title;
+            }
+            
+            // Initialize the chart after the panel is added to the DOM
+            setTimeout(() => {
+                createChart(chartId, chartData);
+            }, 10);
+        } else if (visualizationType === 'dashboard' && chartData) {
+            // Create dashboard container with multiple charts
+            const dashboardContainer = document.createElement('div');
+            dashboardContainer.className = 'dashboard-wrapper';
+            
+            // Set panel title based on dashboard title if available
+            if (chartData.title && title) {
+                title.textContent = chartData.title;
+            }
+            
+            // Create container for each chart in the dashboard
+            if (chartData.charts && Array.isArray(chartData.charts)) {
+                chartData.charts.forEach((chart, index) => {
+                    const chartWrapper = document.createElement('div');
+                    chartWrapper.className = 'dashboard-chart';
+                    chartWrapper.style.height = '300px';
+                    chartWrapper.style.marginBottom = '20px';
+                    
+                    // Add a unique ID for Plotly to target
+                    const chartId = `dashboard-chart-${Date.now()}-${index}`;
+                    chartWrapper.id = chartId;
+                    
+                    dashboardContainer.appendChild(chartWrapper);
+                    
+                    // Initialize the chart after the panel is added to the DOM
+                    setTimeout(() => {
+                        createChart(chartId, chart);
+                    }, 10);
+                });
+            }
+            
+            content.appendChild(dashboardContainer);
         }
         
         panel.appendChild(content);
@@ -1458,7 +1555,155 @@ function convertJsonSchemaToHtml(jsonString) {
     }
 }
 
-// Expose event functions to global scope AFTER all functions are defined
+/**
+ * Create a chart using Plotly.js
+ */
+function createChart(containerId, chartConfig) {
+    // Ensure Plotly.js is loaded
+    if (!window.Plotly) {
+        console.error('Plotly.js is not loaded. Cannot create chart.');
+        
+        // Check if we need to load Plotly
+        const plotlyScript = document.getElementById('plotly-script');
+        if (!plotlyScript) {
+            // Add Plotly.js from CDN if not loaded
+            const script = document.createElement('script');
+            script.id = 'plotly-script';
+            script.src = 'https://cdn.plot.ly/plotly-2.16.1.min.js';
+            script.onload = function() {
+                // Try creating the chart again once Plotly is loaded
+                setTimeout(() => createChart(containerId, chartConfig), 100);
+            };
+            document.head.appendChild(script);
+        }
+        return;
+    }
+    
+    try {
+        const container = document.getElementById(containerId);
+        if (!container) {
+            console.error(`Chart container with id ${containerId} not found.`);
+            return;
+        }
+        
+        const chartType = chartConfig.type || 'scatter';
+        let traces = [];
+        let layout = {
+            title: chartConfig.title || '',
+            margin: { t: 40, r: 10, l: 60, b: 60 },
+            xaxis: chartConfig.xaxis || { title: 'X Axis' },
+            yaxis: chartConfig.yaxis || { title: 'Y Axis' },
+            plot_bgcolor: '#ffffff',
+            paper_bgcolor: '#ffffff',
+            font: { family: 'Arial, sans-serif' }
+        };
+        
+        // Create appropriate traces based on chart type
+        switch (chartType) {
+            case 'bar':
+                traces.push({
+                    x: chartConfig.x || [],
+                    y: chartConfig.y || [],
+                    type: 'bar',
+                    marker: {
+                        color: chartConfig.color || '#1f77b4',
+                        line: {
+                            color: '#333',
+                            width: 1
+                        }
+                    }
+                });
+                break;
+                
+            case 'line':
+                traces.push({
+                    x: chartConfig.x || [],
+                    y: chartConfig.y || [],
+                    type: 'scatter',
+                    mode: 'lines+markers',
+                    line: {
+                        color: chartConfig.color || '#1f77b4',
+                        width: 2
+                    },
+                    marker: {
+                        size: 6,
+                        color: chartConfig.color || '#1f77b4'
+                    }
+                });
+                break;
+                
+            case 'pie':
+                traces.push({
+                    labels: chartConfig.labels || [],
+                    values: chartConfig.values || [],
+                    type: 'pie',
+                    marker: {
+                        colors: chartConfig.colors || [
+                            '#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd',
+                            '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf'
+                        ]
+                    }
+                });
+                
+                // Pie charts need a different layout
+                layout = {
+                    title: chartConfig.title || '',
+                    margin: { t: 40, r: 10, l: 10, b: 10 },
+                    plot_bgcolor: '#ffffff',
+                    paper_bgcolor: '#ffffff',
+                    font: { family: 'Arial, sans-serif' }
+                };
+                break;
+                
+            case 'scatter':
+                traces.push({
+                    x: chartConfig.x || [],
+                    y: chartConfig.y || [],
+                    type: 'scatter',
+                    mode: 'markers',
+                    marker: {
+                        size: 10,
+                        color: chartConfig.color || '#1f77b4',
+                        opacity: 0.7,
+                        line: {
+                            color: '#333',
+                            width: 1
+                        }
+                    }
+                });
+                break;
+                
+            default:
+                // Default to a line chart
+                traces.push({
+                    x: chartConfig.x || [],
+                    y: chartConfig.y || [],
+                    type: 'scatter',
+                    mode: 'lines+markers'
+                });
+        }
+        
+        // Create the plot
+        Plotly.newPlot(containerId, traces, layout, {
+            responsive: true,
+            displayModeBar: true,
+            displaylogo: false,
+            modeBarButtonsToRemove: ['sendDataToCloud', 'autoScale2d', 'resetScale2d']
+        });
+        
+        // Handle responsive resizing
+        window.addEventListener('resize', function() {
+            Plotly.Plots.resize(containerId);
+        });
+        
+    } catch (error) {
+        console.error('Error creating chart:', error);
+    }
+}
+
+/**
+ * Expose event functions to global scope AFTER all functions are defined
+ */
 window.RCAEvents = {
     setupEventListeners,
     handleEventData: handleVisualizationEvent, // Alias for backward compatibility
